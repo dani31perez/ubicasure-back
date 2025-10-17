@@ -3,26 +3,14 @@ const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig");
 const admin = require("firebase-admin");
 
-router.post("/setAdmin", async (req, res) => {
-  const { uid, rol } = req.body;
-  try {
-    await admin.auth().setCustomUserClaims(uid, { admin: rol });
-    const user = await admin.auth().getUser(uid);
-    console.log(user.customClaims);
-    res.send({ message: "Rol asignado" });
-  } catch (e) {
-    res.status(500).send({ error: e.message });
-  } 
-});
- 
 router.post("/register", async (req, res) => {
   try {
     const { firebaseUid, email, fullName, phone, birthDate, bloodType } =
       req.body;
 
-    if (!fullName || !birthDate || !phone || !bloodType) {
+    if (!email || !fullName || !phone || !birthDate || !bloodType) {
       return res.status(400).json({
-        msg: "Nombre completo, fecha de nacimiento, teléfono y tipo de sangre son requeridos.",
+        msg: "Email, nombre completo, fecha de nacimiento, teléfono y tipo de sangre son requeridos.",
       });
     }
     const pool = await poolPromise;
