@@ -1,15 +1,49 @@
 const express = require("express");
 const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig");
-const admin = require("firebase-admin");
 
-router.post("/setRole", async (req, res) => {
-  const { uid, rol } = req.body;
+router.put("/togglePosition/:email", async (req, res) => {
   try {
-    await admin.auth().setCustomUserClaims(uid, { role: rol });
-    res.send({ message: "Rol asignado" });
-  } catch (e) {
-    res.status(500).send({ error: e.message });
+    const { email } = req.params;
+
+    if (!email) {
+      return res.status(400).json({ msg: "El email es requerido" });
+    }
+
+    const pool = await poolPromise;
+
+    const findQuery = "SELECT * FROM miembros WHERE email = @email";
+    const findResult = await pool
+      .request()
+      .input("email", sql.NVarChar, email)
+      .query(findQuery);
+
+    if (findResult.recordset.length === 0) {
+      return res.status(404).json({ msg: "Miembro no encontrado." });
+    }
+
+    const currentPosition = findResult.recordset[0].position;
+
+    const newPosition =
+      currentPosition === "Jefe de Estacion" ? "Miembro" : "Jefe de Estacion";
+
+    const updateQuery = `
+      UPDATE miembros
+      SET position = @newPosition
+      WHERE email = @email;
+    `;
+
+    await pool
+      .request()
+      .input("newPosition", sql.NVarChar, newPosition)
+      .input("email", sql.NVarChar, email)
+      .query(updateQuery);
+
+    res.status(200).json({
+      msg: `Posicion actualizada a: ${newPosition}`,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -41,7 +75,7 @@ router.post("/", async (req, res) => {
       OUTPUT INSERTED.* VALUES (@email, @fullName, @phone, @position, @station);
     `;
 
-    await pool
+    const result = await pool
       .request()
       .input("email", sql.NVarChar, email)
       .input("fullName", sql.NVarChar, fullName)
@@ -50,8 +84,11 @@ router.post("/", async (req, res) => {
       .input("station", sql.NVarChar, station)
       .query(query);
 
+    const nuevoMiembro = result.recordset[0];
+
     res.status(201).json({
       msg: "Miembro registrado exitosamente.",
+      code: nuevoMiembro.code,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -78,15 +115,14 @@ router.post("/login", async (req, res) => {
       .query(query);
 
     if (result.recordset.length > 0) {
-      const {code, ...miembro} = result.recordset[0];
+      const { code, ...miembro } = result.recordset[0];
       res.status(200).json({
         msg: "Ingreso exitoso.",
-        miembro: miembro 
+        miembro: miembro,
       });
     } else {
       res.status(401).json({ msg: "Código inválido o no encontrado." });
     }
-    
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
