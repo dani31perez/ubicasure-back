@@ -64,9 +64,11 @@ router.get("/getByStation/:station", async (req, res) => {
       .query(findQuery);
 
     if (members.recordset.length === 0) {
-      return res.status(404).json({ msg: "No se encontraron miembros para esa estacion." });
-    } 
-    
+      return res
+        .status(404)
+        .json({ msg: "No se encontraron miembros para esa estacion." });
+    }
+
     res.status(200).send(members.recordset);
   } catch (error) {
     res.status(500).json({ error: error.message });

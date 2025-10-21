@@ -1,10 +1,10 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const router = express.Router();
 const { Firestore } = require("@google-cloud/firestore");
-  
+
 const db = new Firestore();
-  
+
 function getDistanceInKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = deg2rad(lat2 - lat1);
