@@ -2,20 +2,20 @@ const express = require("express");
 const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig");
 
-router.put("/togglePosition/:email", async (req, res) => {
+router.put("/togglePosition/:code", async (req, res) => {
   try {
-    const { email } = req.params;
+    const { code } = req.params;
 
-    if (!email) {
-      return res.status(400).json({ msg: "El email es requerido" });
+    if (!code) {
+      return res.status(400).json({ msg: "El codigo es requerido" });
     }
 
     const pool = await poolPromise;
 
-    const findQuery = "SELECT * FROM miembros WHERE email = @email";
+    const findQuery = "SELECT * FROM miembros WHERE code = @code";
     const findResult = await pool
       .request()
-      .input("email", sql.NVarChar, email)
+      .input("code", sql.NVarChar, code)
       .query(findQuery);
 
     if (findResult.recordset.length === 0) {
@@ -30,18 +30,44 @@ router.put("/togglePosition/:email", async (req, res) => {
     const updateQuery = `
       UPDATE miembros
       SET position = @newPosition
-      WHERE email = @email;
+      WHERE code = @code;
     `;
 
     await pool
       .request()
       .input("newPosition", sql.NVarChar, newPosition)
-      .input("email", sql.NVarChar, email)
+      .input("code", sql.NVarChar, code)
       .query(updateQuery);
 
     res.status(200).json({
       msg: `Posicion actualizada a: ${newPosition}`,
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/getByStation/:station", async (req, res) => {
+  try {
+    const { station } = req.params;
+
+    if (!station) {
+      return res.status(400).json({ msg: "La estacion es requerida" });
+    }
+
+    const pool = await poolPromise;
+
+    const findQuery = "SELECT * FROM miembros WHERE station = @station";
+    const members = await pool
+      .request()
+      .input("station", sql.NVarChar, station)
+      .query(findQuery);
+
+    if (members.recordset.length === 0) {
+      return res.status(404).json({ msg: "No se encontraron miembros para esa estacion." });
+    } 
+    
+    res.status(200).send(members.recordset);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -53,7 +79,7 @@ router.post("/", async (req, res) => {
 
     if (!email || !fullName || !phone || !position || !station) {
       return res.status(400).json({
-        msg: "Email, nombre completo, teléfono, posición y estación son requeridos.",
+        msg: "Email, nombre completo, teléfono, posición y estacion son requeridos.",
       });
     }
 

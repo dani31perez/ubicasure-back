@@ -93,7 +93,7 @@ router.get("/", async (req, res) => {
         longitude: alert.longitude,
       }));
 
-    res.json(nearbyAlerts);
+    res.status(200).json(nearbyAlerts);
   } catch (error) {
     console.error("Error al buscar alertas cercanas:", error);
     res.status(500).json({ error: "Error interno del servidor." });

@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig");
-const admin = require("firebase-admin");
 
 router.post("/register", async (req, res) => {
   try {
