@@ -3,25 +3,25 @@ const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig"); // Asegúrate que la ruta sea correcta
 
 router.post("/", async (req, res) => {
-  const { uid, latitude, longitude } = req.body;
+  const { email, latitude, longitude } = req.body;
 
-  if (!uid || !latitude || !longitude ) {
+  if (!email || !latitude || !longitude ) {
     return res
       .status(400)
-      .json({ error: "Faltan los campos uid, latitude, o longitude." });
+      .json({ error: "Faltan los campos email, latitude, o longitude." });
   }
 
   try {
     const pool = await poolPromise;
     const query = `
-      INSERT INTO Alerts (firebaseUid, latitude, longitude)
-      OUTPUT INSERTED.alert_id
-      VALUES (@uid, @lat, @lon);
+      INSERT INTO Alerts (email, latitude, longitude)
+      OUTPUT INSERTED.alertId
+      VALUES (@email, @lat, @lon);
     `;
 
     const result = await pool
       .request()
-      .input("uid", sql.NVarChar, uid)
+      .input("email", sql.NVarChar, email)
       .input("lat", sql.Float, latitude)
       .input("lon", sql.Float, longitude)
       .query(query);
@@ -62,10 +62,9 @@ router.get("/", async (req, res) => {
 
       ;WITH AlertsWithDistance AS (
           SELECT
-              firebaseUid,
+              email,
               latitude,
               longitude,
-              -- Fórmula de Haversine
               (@R * 2 * ATN2(
                   SQRT(
                       SIN(RADIANS(latitude - @userLat) / 2) * SIN(RADIANS(latitude - @userLat) / 2) +
@@ -80,11 +79,10 @@ router.get("/", async (req, res) => {
               )) AS distanceInKm
           FROM Alerts
       )
-      -- Filtramos los resultados por la distancia calculada
-      SELECT firebaseUid, latitude, longitude, distanceInKm
+      SELECT email, latitude, longitude, distanceInKm
       FROM AlertsWithDistance
       WHERE distanceInKm <= @radiusKm
-      ORDER BY distanceInKm; -- Opcional: ordenar por el más cercano
+      ORDER BY distanceInKm;
     `;
 
     const result = await pool
