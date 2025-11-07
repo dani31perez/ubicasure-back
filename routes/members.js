@@ -28,7 +28,7 @@ router.put("/togglePosition/:code", async (req, res) => {
       currentPosition === "Jefe de Estacion" ? "Miembro" : "Jefe de Estacion";
 
     const updateQuery = `
-      UPDATE miembros
+      UPDATE Members
       SET position = @newPosition
       WHERE code = @code;
     `;
@@ -57,7 +57,7 @@ router.get("/getByStation/:station", async (req, res) => {
 
     const pool = await poolPromise;
 
-    const findQuery = "SELECT * FROM miembros WHERE station = @station";
+    const findQuery = "SELECT * FROM Members WHERE station = @station";
     const members = await pool
       .request()
       .input("station", sql.NVarChar, station)
@@ -66,7 +66,7 @@ router.get("/getByStation/:station", async (req, res) => {
     if (members.recordset.length === 0) {
       return res
         .status(404)
-        .json({ msg: "No se encontraron miembros para esa estacion." });
+        .json({ msg: "No se encontraron Members para esa estacion." });
     }
 
     res.status(200).send(members.recordset);
@@ -90,7 +90,7 @@ router.post("/", async (req, res) => {
     const userExistsResult = await pool
       .request()
       .input("email", sql.NVarChar, email)
-      .query("SELECT COUNT(*) as userCount FROM miembros WHERE email = @email");
+      .query("SELECT COUNT(*) as userCount FROM Members WHERE email = @email");
 
     if (userExistsResult.recordset[0].userCount > 0) {
       return res
@@ -99,7 +99,7 @@ router.post("/", async (req, res) => {
     }
 
     const query = `
-      INSERT INTO miembros (email, fullName, phone, position, station)
+      INSERT INTO Members (email, fullName, phone, position, station)
       OUTPUT INSERTED.* VALUES (@email, @fullName, @phone, @position, @station);
     `;
 
@@ -135,7 +135,7 @@ router.post("/login", async (req, res) => {
 
     const pool = await poolPromise;
 
-    const query = "SELECT * FROM miembros WHERE code = @code";
+    const query = "SELECT * FROM Members WHERE code = @code";
 
     const result = await pool
       .request()
