@@ -7,6 +7,7 @@ const alertRoutes = require("./routes/alerts");
 const memberRoutes = require("./routes/members");
 const chatRoutes = require("./routes/chats");
 const messageRoutes = require("./routes/messages");
+const reportRoutes = require("./routes/reports");
 
 const app = express();
 app.use(express.json());
@@ -16,6 +17,7 @@ app.use("/alerts", alertRoutes);
 app.use("/members", memberRoutes);
 app.use("/chats", chatRoutes);
 app.use("/messages", messageRoutes);
+app.use("/reports", reportRoutes);
 
 const port = process.env.PORT || 8080;
 

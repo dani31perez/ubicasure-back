@@ -8,7 +8,7 @@ router.post("/", async (req, res) => {
   if (!email || !latitude || !longitude ) {
     return res
       .status(400)
-      .json({ error: "Faltan los campos email, latitude, o longitude." });
+      .json({ error: "Faltan los campos email, latitude o longitude." });
   }
 
   try {
