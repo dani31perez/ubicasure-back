@@ -5,20 +5,20 @@ const { Firestore } = require("@google-cloud/firestore");
 const db = new Firestore();
 const messageRef = db.collection("messages");
 const upload = multer({ storage: multer.memoryStorage() });
-const { deleteFile, addFiles } = require("../utils.js");
+const { addFiles } = require("../utils.js");
 
 /*
   POST /
   Agrega un nuevo mensaje a un chat específico.
 */
 router.post("/", upload.single("data"), async (req, res) => {
-  const { chatId, sender, type, position } = req.body;
+  const { chatId, sender, type, position, senderName } = req.body;
 
   // Validar campos obligatorios
-  if (!sender || !chatId || !type || !position)
+  if (!sender || !chatId || !type || !position || !senderName)
     return res
       .status(400)
-      .send("All fields (sender, data, chatId, type, position) are required.");
+      .send("All fields (sender, data, chatId, type, position, senderName) are required.");
 
   try {
     // Verificar que el chat exista
@@ -73,6 +73,7 @@ router.post("/", upload.single("data"), async (req, res) => {
       timestamp,
       type,
       position,
+      senderName
     };
 
     // Guardar el mensaje con ID personalizado

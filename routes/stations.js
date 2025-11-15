@@ -7,11 +7,13 @@ const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 
 async function fetchNearbyPlaces(type, location, radius, apiKey) {
   const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radius}&type=${type}&key=${apiKey}&language=es`;
+
   try {
     const response = await axios.get(url);
     if (response.data.status === "OK") {
       return response.data.results.map((place) => ({
         name: place.name,
+        type: type,
         address: place.vicinity,
         location: place.geometry.location,
       }));
@@ -22,6 +24,9 @@ async function fetchNearbyPlaces(type, location, radius, apiKey) {
     throw new Error("Failed to fetch data from Google Maps API.");
   }
 }
+router.get("/getApiKey", async (_req, res) => {
+  res.status(200).json(process.env.GOOGLE_MAPS_API_KEY);
+});
 
 router.get("/fireStations", async (req, res) => {
   const { guatemalaCityLocation, searchRadius } = req.query;
