@@ -14,9 +14,9 @@ async function deleteOldAlerts() {
     await pool.request().query(query);
   } catch (error) {
     console.error("Error al borrar alertas en SQL Server:", error);
-    res
-      .status(500)
-      .json({ error: "Error interno del servidor.", details: error.message });
+    throw new Error(
+      `Error en el proceso de borrado de alertas: ${error.message}`
+    );
   }
 }
 
