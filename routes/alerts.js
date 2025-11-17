@@ -2,10 +2,28 @@ const express = require("express");
 const router = express.Router();
 const { sql, poolPromise } = require("../dbConfig"); // Asegúrate que la ruta sea correcta
 
+async function deleteOldAlerts() {
+  try {
+    const pool = await poolPromise;
+    const query = `
+      DECLARE @nowGuatemala DATETIME = DATEADD(hour, -6, GETUTCDATE());
+      DECLARE @unaHoraAtras DATETIME = DATEADD(hour, -1, @nowGuatemala);
+      DELETE FROM Alerts
+      WHERE fechaCreacion < @unaHoraAtras;
+    `;
+    await pool.request().query(query);
+  } catch (error) {
+    console.error("Error al borrar alertas en SQL Server:", error);
+    res
+      .status(500)
+      .json({ error: "Error interno del servidor.", details: error.message });
+  }
+}
+
 router.post("/", async (req, res) => {
   const { email, latitude, longitude } = req.body;
-
-  if (!email || !latitude || !longitude ) {
+  await deleteOldAlerts();
+  if (!email || !latitude || !longitude) {
     return res
       .status(400)
       .json({ error: "Faltan los campos email, latitude o longitude." });
@@ -40,8 +58,8 @@ router.post("/", async (req, res) => {
 
 router.get("/", async (req, res) => {
   const { lat, lon } = req.query;
-  const searchRadiusKm = 5; 
-
+  const searchRadiusKm = 5;
+  await deleteOldAlerts();
   if (!lat || !lon) {
     return res
       .status(400)
