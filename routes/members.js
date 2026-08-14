@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { sql, poolPromise } = require("../dbConfig");
+const { poolPromise } = require("../dbConfig");
 
 router.put("/togglePosition/:code", async (req, res) => {
   try {
@@ -10,34 +10,26 @@ router.put("/togglePosition/:code", async (req, res) => {
       return res.status(400).json({ msg: "El codigo es requerido" });
     }
 
+    const findQuery = "SELECT * FROM Members WHERE code = ?";
     const pool = await poolPromise;
+    const [findResult] = await pool.execute(findQuery, [code]);
 
-    const findQuery = "SELECT * FROM miembros WHERE code = @code";
-    const findResult = await pool
-      .request()
-      .input("code", sql.NVarChar, code)
-      .query(findQuery);
-
-    if (findResult.recordset.length === 0) {
+    if (findResult.length === 0) {
       return res.status(404).json({ msg: "Miembro no encontrado." });
     }
 
-    const currentPosition = findResult.recordset[0].position;
+    const currentPosition = findResult.position;
 
     const newPosition =
       currentPosition === "Jefe de Estacion" ? "Miembro" : "Jefe de Estacion";
 
     const updateQuery = `
       UPDATE Members
-      SET position = @newPosition
-      WHERE code = @code;
+      SET position = ?
+      WHERE code = ?;
     `;
 
-    await pool
-      .request()
-      .input("newPosition", sql.NVarChar, newPosition)
-      .input("code", sql.NVarChar, code)
-      .query(updateQuery);
+    await pool.execute(updateQuery), [newPosition, code];
 
     res.status(200).json({
       msg: `Posicion actualizada a: ${newPosition}`,
@@ -55,21 +47,17 @@ router.get("/getByStation/:station", async (req, res) => {
       return res.status(400).json({ msg: "La estacion es requerida" });
     }
 
+    const findQuery = "SELECT * FROM Members WHERE station = ?";
     const pool = await poolPromise;
+    const [members] = await pool.execute(findQuery, [station]);
 
-    const findQuery = "SELECT * FROM Members WHERE station = @station";
-    const members = await pool
-      .request()
-      .input("station", sql.NVarChar, station)
-      .query(findQuery);
-
-    if (members.recordset.length === 0) {
+    if (members.length === 0) {
       return res
         .status(404)
         .json({ msg: "No se encontraron Members para esa estacion." });
     }
 
-    res.status(200).send(members.recordset);
+    res.status(200).send(members);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -86,38 +74,52 @@ router.post("/", async (req, res) => {
     }
 
     const pool = await poolPromise;
+    const [userExistsResult] = await pool
+    .execute("SELECT COUNT(*) as userCount FROM Members WHERE email = ?", [email]);
 
-    const userExistsResult = await pool
-      .request()
-      .input("email", sql.NVarChar, email)
-      .query("SELECT COUNT(*) as userCount FROM Members WHERE email = @email");
-
-    if (userExistsResult.recordset[0].userCount > 0) {
+    if (userExistsResult[0].userCount > 0) {
       return res
         .status(409)
         .json({ msg: "Este miembro ya tiene un perfil registrado." });
     }
 
     const query = `
-      INSERT INTO Members (email, fullName, phone, position, station)
-      OUTPUT INSERTED.* VALUES (@email, @fullName, @phone, @position, @station);
+      INSERT INTO Members (email, fullName, phone, position, station, code)
+      VALUES (?, ?, ?, ?, ?, ?);
     `;
+    let inserted = false;
 
-    const result = await pool
-      .request()
-      .input("email", sql.NVarChar, email)
-      .input("fullName", sql.NVarChar, fullName)
-      .input("phone", sql.VarChar, phone)
-      .input("position", sql.NVarChar, position)
-      .input("station", sql.NVarChar, station)
-      .query(query);
+        for (let i = 0; i < 5; i++) {
+          const code = Math.floor(100000 + Math.random() * 900000).toString();
+          try {
+            await pool.execute(insertQuery, [
+              email,
+              fullName,
+              phone,
+              position,
+              station,
+              code,
+            ]);
 
-    const nuevoMiembro = result.recordset[0];
+            inserted = true;
+            res.status(201).json({
+              msg: "Miembro registrado exitosamente.",
+              code,
+            });
+            break; 
+          } catch (error) {
+            if (error.code === "ER_DUP_ENTRY" && error.message.includes("code")) {
+              continue; 
+            }
+            throw error; 
+          }
+        }
 
-    res.status(201).json({
-      msg: "Miembro registrado exitosamente.",
-      code: nuevoMiembro.code,
-    });
+        if (!inserted) {
+          throw new Error(
+            "No se pudo generar un código único después de varios intentos."
+          );
+        }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -133,17 +135,12 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    const query = "SELECT * FROM Members WHERE code = ?";
     const pool = await poolPromise;
+    const [result] = await pool.execute(query, [code]);
 
-    const query = "SELECT * FROM Members WHERE code = @code";
-
-    const result = await pool
-      .request()
-      .input("code", sql.Char, code)
-      .query(query);
-
-    if (result.recordset.length > 0) {
-      const { code, ...miembro } = result.recordset[0];
+    if (result.length > 0) {
+      const { code, ...miembro } = result[0];
       res.status(200).json({
         msg: "Ingreso exitoso.",
         miembro: miembro,

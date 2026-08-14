@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { sql, poolPromise } = require("../dbConfig");
+const { poolPromise } = require("../dbConfig");
 
 router.post("/register", async (req, res) => {
   try {
@@ -12,16 +12,15 @@ router.post("/register", async (req, res) => {
         msg: "Email, nombre completo, fecha de nacimiento, teléfono y tipo de sangre son requeridos.",
       });
     }
-    const pool = await poolPromise;
 
-    const userExistsResult = await pool
-      .request()
-      .input("uid", sql.NVarChar, firebaseUid)
-      .query(
-        "SELECT COUNT(*) as userCount FROM Users WHERE firebaseUid = @uid"
+    const pool = await poolPromise;
+    const [userExistsResult] = await pool
+      .execute(
+        "SELECT COUNT(*) as userCount FROM Users WHERE firebaseUid = ?",
+        [firebaseUid]
       );
 
-    if (userExistsResult.recordset[0].userCount > 0) {
+    if (userExistsResult[0].userCount > 0) {
       return res
         .status(409)
         .json({ msg: "Este usuario ya tiene un perfil registrado." });
@@ -29,18 +28,17 @@ router.post("/register", async (req, res) => {
 
     const query = `
       INSERT INTO Users (firebaseUid, email, fullName, phone, birthDate, bloodType)
-      VALUES (@uid, @email, @name, @phone, @bdate, @btype);
+      VALUES (?, ?, ?, ?, ?, ?);
     `;
 
-    await pool
-      .request()
-      .input("uid", sql.NVarChar, firebaseUid)
-      .input("email", sql.NVarChar, email)
-      .input("name", sql.NVarChar, fullName)
-      .input("phone", sql.VarChar, phone)
-      .input("bdate", sql.Date, birthDate)
-      .input("btype", sql.VarChar, bloodType)
-      .query(query);
+    await pool.execute(query, [
+      firebaseUid,
+      email,
+      fullName,
+      phone,
+      birthDate,
+      bloodType,
+    ]);
 
     res.status(201).json({ msg: "Usuario registrado exitosamente." });
   } catch (error) {

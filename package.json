@@ -1,12 +1,13 @@
 {
   "dependencies": {
+    "@google-cloud/cloud-sql-connector": "^1.11.3",
     "@google-cloud/firestore": "^7.11.6",
     "@google-cloud/storage": "^7.17.2",
     "axios": "^1.12.2",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
-    "mssql": "^11.0.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "mysql2": "^3.11.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

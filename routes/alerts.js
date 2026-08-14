@@ -1,19 +1,17 @@
 const express = require("express");
 const router = express.Router();
-const { sql, poolPromise } = require("../dbConfig"); // Asegúrate que la ruta sea correcta
+const { poolPromise } = require("../dbConfig"); // Asegúrate que la ruta sea correcta
 
 async function deleteOldAlerts() {
   try {
-    const pool = await poolPromise;
     const query = `
-      DECLARE @nowGuatemala DATETIME = DATEADD(hour, -6, GETUTCDATE());
-      DECLARE @unaHoraAtras DATETIME = DATEADD(hour, -1, @nowGuatemala);
       DELETE FROM Alerts
-      WHERE fechaCreacion < @unaHoraAtras;
+      WHERE fechaCreacion < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR);
     `;
-    await pool.request().query(query);
+    const pool = await poolPromise;
+    await pool.execute(query);
   } catch (error) {
-    console.error("Error al borrar alertas en SQL Server:", error);
+    console.error("Error al borrar alertas en MySQL:", error);
     throw new Error(
       `Error en el proceso de borrado de alertas: ${error.message}`
     );
@@ -30,26 +28,20 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const pool = await poolPromise;
-    const query = `
+     const query = `
       INSERT INTO Alerts (email, latitude, longitude)
-      OUTPUT INSERTED.alertId
-      VALUES (@email, @lat, @lon);
+      VALUES (?, ?, ?);
     `;
 
-    const result = await pool
-      .request()
-      .input("email", sql.NVarChar, email)
-      .input("lat", sql.Float, latitude)
-      .input("lon", sql.Float, longitude)
-      .query(query);
+    const pool = await poolPromise;
+    const [result] = await pool.execute(query, [email, latitude, longitude]);
 
     res.status(201).json({
       message: "Alerta creada exitosamente.",
-      alertId: result.recordset[0].alertId,
+      alertId: result.insertId,
     });
   } catch (error) {
-    console.error("Error al crear alerta en SQL Server:", error);
+    console.error("Error al crear alerta en MySQL Server:", error);
     res
       .status(500)
       .json({ error: "Error interno del servidor.", details: error.message });
@@ -70,47 +62,18 @@ router.get("/", async (req, res) => {
     const userLat = parseFloat(lat);
     const userLon = parseFloat(lon);
 
-    const pool = await poolPromise;
-
     const query = `
-      DECLARE @userLat FLOAT = @lat;
-      DECLARE @userLon FLOAT = @lon;
-      DECLARE @radiusKm FLOAT = @radius;
-      DECLARE @R FLOAT = 6371; -- Radio de la Tierra en km
-
-      ;WITH AlertsWithDistance AS (
-          SELECT
-              email,
-              latitude,
-              longitude,
-              (@R * 2 * ATN2(
-                  SQRT(
-                      SIN(RADIANS(latitude - @userLat) / 2) * SIN(RADIANS(latitude - @userLat) / 2) +
-                      COS(RADIANS(@userLat)) * COS(RADIANS(latitude)) *
-                      SIN(RADIANS(longitude - @userLon) / 2) * SIN(RADIANS(longitude - @userLon) / 2)
-                  ),
-                  SQRT(1 - (
-                      SIN(RADIANS(latitude - @userLat) / 2) * SIN(RADIANS(latitude - @userLat) / 2) +
-                      COS(RADIANS(@userLat)) * COS(RADIANS(latitude)) *
-                      SIN(RADIANS(longitude - @userLon) / 2) * SIN(RADIANS(longitude - @userLon) / 2)
-                  ))
-              )) AS distanceInKm
+          SELECT email, latitude, longitude,
+            ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
           FROM Alerts
-      )
-      SELECT email, latitude, longitude, distanceInKm
-      FROM AlertsWithDistance
-      WHERE distanceInKm <= @radiusKm
-      ORDER BY distanceInKm;
-    `;
+          HAVING distanceInKm <= ?
+          ORDER BY distanceInKm;
+        `;
 
-    const result = await pool
-      .request()
-      .input("lat", sql.Float, userLat)
-      .input("lon", sql.Float, userLon)
-      .input("radius", sql.Float, searchRadiusKm)
-      .query(query);
+    const pool = await poolPromise;
+    const [result] = await pool.execute(query, [userLon, userLat, searchRadiusKm]);
 
-    res.status(200).json(result.recordset);
+    res.status(200).json(result);
   } catch (error) {
     console.error("Error al buscar alertas cercanas:", error);
     res

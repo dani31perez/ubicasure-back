@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { sql, poolPromise } = require("../dbConfig");
+const { poolPromise } = require("../dbConfig");
 
 router.post("/", async (req, res) => {
   const { stationName, memberCode, userEmail, content } = req.body;
@@ -13,27 +13,19 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const pool = await poolPromise;
     const query = `
       INSERT INTO Reports (stationName, memberCode, userEmail, content)
-      OUTPUT INSERTED.reportId
-      VALUES (@stationName, @memberCode, @userEmail, @content);
+      VALUES (?, ?, ?, ?);
     `;
-
-    const result = await pool
-      .request()
-      .input("stationName", sql.NVarChar, stationName)
-      .input("memberCode", sql.NVarChar, memberCode)
-      .input("userEmail", sql.NVarChar, userEmail)
-      .input("content", sql.NVarChar(sql.MAX), content)
-      .query(query);
+    const pool = await poolPromise;
+    const [result] = await pool.execute(query, [stationName, memberCode, userEmail, content]);
 
     res.status(201).json({
       message: "Reporte creado exitosamente.",
-      reportId: result.recordset[0].reportId,
+      reportId: result.insertId,
     });
   } catch (error) {
-    console.error("Error al crear reporte en SQL Server:", error);
+    console.error("Error al crear reporte en MySQL", error);
 
     res
       .status(500)
@@ -51,20 +43,17 @@ router.get("/getByStation", async (req, res) => {
   }
 
   try {
-    const pool = await poolPromise;
     const query = `
       SELECT *
       FROM Reports
-      WHERE stationName = @stationName
+      WHERE stationName = ?
       ORDER BY createdAt DESC;
     `;
 
-    const result = await pool
-      .request()
-      .input("stationName", sql.NVarChar, stationName)
-      .query(query);
+    const pool = await poolPromise;
+    const [result] = await pool.execute(query, [stationName]);
 
-    res.status(200).json(result.recordset);
+    res.status(200).json(result);
   } catch (error) {
     console.error("Error al buscar reportes por estación:", error);
     res
