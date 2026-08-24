@@ -4,8 +4,15 @@ const { poolPromise } = require("../dbConfig");
 
 router.post("/register", async (req, res) => {
   try {
-    const { firebaseUid, email, fullName, phone, birthDate, bloodType } =
-      req.body;
+    const {
+      firebaseUid,
+      email,
+      fullName,
+      phone,
+      birthDate,
+      bloodType,
+      telegramUsername,
+    } = req.body;
 
     if (!email || !fullName || !phone || !birthDate || !bloodType) {
       return res.status(400).json({
@@ -27,8 +34,8 @@ router.post("/register", async (req, res) => {
     }
 
     const query = `
-      INSERT INTO Users (firebaseUid, email, fullName, phone, birthDate, bloodType)
-      VALUES (?, ?, ?, ?, ?, ?);
+      INSERT INTO Users (firebaseUid, email, fullName, phone, birthDate, bloodType, telegramUsername, reliability)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     `;
 
     await pool.execute(query, [
@@ -38,6 +45,8 @@ router.post("/register", async (req, res) => {
       phone,
       birthDate,
       bloodType,
+      telegramUsername || null,
+      100,
     ]);
 
     res.status(201).json({ msg: "Usuario registrado exitosamente." });

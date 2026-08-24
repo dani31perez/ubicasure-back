@@ -1,24 +1,26 @@
 const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig");
+const bcrypt = require("bcryptjs");
+const SALT_ROUNDS = 10;
 
-router.put("/togglePosition/:code", async (req, res) => {
+router.put("/togglePosition/:email", async (req, res) => {
   try {
-    const { code } = req.params;
+    const { email } = req.params;
 
-    if (!code) {
-      return res.status(400).json({ msg: "El codigo es requerido" });
+    if (!email) {
+      return res.status(400).json({ msg: "El email es requerido" });
     }
 
-    const findQuery = "SELECT * FROM Members WHERE code = ?";
+    const findQuery = "SELECT * FROM Members WHERE email = ?";
     const pool = await poolPromise;
-    const [findResult] = await pool.execute(findQuery, [code]);
+    const [findResult] = await pool.execute(findQuery, [email]);
 
     if (findResult.length === 0) {
       return res.status(404).json({ msg: "Miembro no encontrado." });
     }
 
-    const currentPosition = findResult.position;
+    const currentPosition = findResult[0].position;
 
     const newPosition =
       currentPosition === "Jefe de Estacion" ? "Miembro" : "Jefe de Estacion";
@@ -26,10 +28,10 @@ router.put("/togglePosition/:code", async (req, res) => {
     const updateQuery = `
       UPDATE Members
       SET position = ?
-      WHERE code = ?;
+      WHERE email = ?;
     `;
 
-    await pool.execute(updateQuery), [newPosition, code];
+    await pool.execute(updateQuery, [newPosition, email]);
 
     res.status(200).json({
       msg: `Posicion actualizada a: ${newPosition}`,
@@ -57,11 +59,36 @@ router.get("/getByStation/:station", async (req, res) => {
         .json({ msg: "No se encontraron Members para esa estacion." });
     }
 
-    res.status(200).send(members);
+    const sanitized = members.map(({ code, ...rest }) => rest);
+
+    res.status(200).send(sanitized);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
+const generateUniqueCode = async (pool) => {
+  const [existing] = await pool.execute("SELECT code FROM Members");
+  const existingHashes = existing.map((row) => row.code);
+
+  for (let i = 0; i < 5; i++) {
+    const candidate = Math.floor(100000 + Math.random() * 900000).toString();
+
+    let collision = false;
+    for (const hash of existingHashes) {
+      if (await bcrypt.compare(candidate, hash)) {
+        collision = true;
+        break;
+      }
+    }
+
+    if (!collision) return candidate;
+  }
+
+  throw new Error(
+    "No se pudo generar un código único después de varios intentos."
+  );
+};
 
 router.post("/", async (req, res) => {
   try {
@@ -83,43 +110,27 @@ router.post("/", async (req, res) => {
         .json({ msg: "Este miembro ya tiene un perfil registrado." });
     }
 
+    const code = await generateUniqueCode(pool);
+    const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
+
     const query = `
       INSERT INTO Members (email, fullName, phone, position, station, code)
       VALUES (?, ?, ?, ?, ?, ?);
     `;
-    let inserted = false;
 
-        for (let i = 0; i < 5; i++) {
-          const code = Math.floor(100000 + Math.random() * 900000).toString();
-          try {
-            await pool.execute(insertQuery, [
-              email,
-              fullName,
-              phone,
-              position,
-              station,
-              code,
-            ]);
+    await pool.execute(query, [
+      email,
+      fullName,
+      phone,
+      position,
+      station,
+      codeHash,
+    ]);
 
-            inserted = true;
-            res.status(201).json({
-              msg: "Miembro registrado exitosamente.",
-              code,
-            });
-            break; 
-          } catch (error) {
-            if (error.code === "ER_DUP_ENTRY" && error.message.includes("code")) {
-              continue; 
-            }
-            throw error; 
-          }
-        }
-
-        if (!inserted) {
-          throw new Error(
-            "No se pudo generar un código único después de varios intentos."
-          );
-        }
+    res.status(201).json({
+      msg: "Miembro registrado exitosamente.",
+      code,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -135,15 +146,22 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    const query = "SELECT * FROM Members WHERE code = ?";
     const pool = await poolPromise;
-    const [result] = await pool.execute(query, [code]);
+    const [result] = await pool.execute("SELECT * FROM Members");
 
-    if (result.length > 0) {
-      const { code, ...miembro } = result[0];
+    let matched = null;
+    for (const member of result) {
+      if (await bcrypt.compare(code, member.code)) {
+        matched = member;
+        break;
+      }
+    }
+
+    if (matched) {
+      const { code: _codeHash, ...miembro } = matched;
       res.status(200).json({
         msg: "Ingreso exitoso.",
-        miembro: miembro,
+        miembro,
       });
     } else {
       res.status(401).json({ msg: "Código inválido o no encontrado." });

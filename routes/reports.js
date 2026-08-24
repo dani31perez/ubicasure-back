@@ -3,22 +3,22 @@ const router = express.Router();
 const { poolPromise } = require("../dbConfig");
 
 router.post("/", async (req, res) => {
-  const { stationName, memberCode, userEmail, content } = req.body;
+  const { stationName, memberEmail, userEmail, content } = req.body;
 
-  if (!stationName || !memberCode || !userEmail || !content) {
+  if (!stationName || !memberEmail || !userEmail || !content) {
     return res.status(400).json({
       error:
-        "Faltan los campos nombre de la estacion, codigo, email o contenido.",
+        "Faltan los campos nombre de la estacion, email del miembro, email del usuario  o contenido.",
     });
   }
 
   try {
     const query = `
-      INSERT INTO Reports (stationName, memberCode, userEmail, content)
+      INSERT INTO Reports (stationName, memberEmail, userEmail, content)
       VALUES (?, ?, ?, ?);
     `;
     const pool = await poolPromise;
-    const [result] = await pool.execute(query, [stationName, memberCode, userEmail, content]);
+    const [result] = await pool.execute(query, [stationName, memberEmail, userEmail, content]);
 
     res.status(201).json({
       message: "Reporte creado exitosamente.",
