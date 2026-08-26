@@ -171,4 +171,39 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.put("/resetCode", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ msg: "El email es requerido." });
+    }
+
+    const pool = await poolPromise;
+    const [findResult] = await pool.execute(
+      "SELECT * FROM Members WHERE email = ?",
+      [email]
+    );
+
+    if (findResult.length === 0) {
+      return res.status(404).json({ msg: "Miembro no encontrado." });
+    }
+
+    const code = await generateUniqueCode(pool);
+    const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
+
+    await pool.execute("UPDATE Members SET code = ? WHERE email = ?", [
+      codeHash,
+      email,
+    ]);
+
+    res.status(200).json({
+      msg: "Código actualizado exitosamente.",
+      code,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
