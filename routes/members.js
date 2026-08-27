@@ -206,4 +206,43 @@ router.put("/resetCode", async (req, res) => {
   }
 });
 
+router.put("/update/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { fullName, phone, station } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ msg: "El email es requerido." });
+    }
+
+    if (!fullName || !phone || !station) {
+      return res.status(400).json({
+        msg: "Faltan campos: nombre completo, teléfono y estación son requeridos.",
+      });
+    }
+
+    const fields = ["fullName = ?", "phone = ?", "station = ?"];
+    const values = [fullName, phone, station];
+
+    const pool = await poolPromise;
+    const [existing] = await pool.execute(
+      "SELECT * FROM Members WHERE email = ?",
+      [email]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ msg: "Miembro no encontrado." });
+    }
+
+    const query = `UPDATE Members SET ${fields.join(", ")} WHERE email = ?`;
+    values.push(email);
+
+    await pool.execute(query, values);
+
+    res.status(200).json({ msg: "Miembro actualizado exitosamente." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
