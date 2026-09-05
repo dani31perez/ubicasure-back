@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig");
 const authenticateUser = require("../middleware/authenticateUser");
+const authenticateMember = require("../middleware/authenticateMember");
 
 router.post("/register", authenticateUser, async (req, res) => {
   try {
@@ -134,6 +135,42 @@ router.put("/update/:email", authenticateUser, async (req, res) => {
     await pool.execute(query, values);
 
     res.status(200).json({ msg: "Usuario actualizado exitosamente." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put("/reliability/:email", authenticateMember, async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { reliability } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ msg: "El email es requerido." });
+    }
+
+    if (reliability === undefined || reliability < 0 || reliability > 100) {
+      return res.status(400).json({
+        msg: "La confiabilidad es requerida y debe estar entre 0 y 100.",
+      });
+    }
+
+    const pool = await poolPromise;
+    const [existing] = await pool.execute(
+      "SELECT * FROM Users WHERE email = ?",
+      [email]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ msg: "Usuario no encontrado." });
+    }
+
+    await pool.execute("UPDATE Users SET reliability = ? WHERE email = ?", [
+      reliability,
+      email,
+    ]);
+
+    res.status(200).json({ msg: "Confiabilidad actualizada exitosamente." });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig"); 
 const authenticateUser = require("../middleware/authenticateUser");
+const ALERT_CLUSTER_RADIUS_METERS = 100;
 
 async function deleteOldAlerts() {
   try {
@@ -31,12 +32,42 @@ router.post("/", authenticateUser,  async (req, res) => {
   }
 
   try {
-     const query = `
-      INSERT INTO Alerts (email, latitude, longitude)
-      VALUES (?, ?, ?);
+    const pool = await poolPromise;
+
+    const nearbyQuery = `
+      SELECT alertId
+      FROM Alerts
+      WHERE ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) <= ?
+      ORDER BY ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) ASC
+      LIMIT 1;
+    `;
+    const [nearby] = await pool.execute(nearbyQuery, [
+      longitude,
+      latitude,
+      ALERT_CLUSTER_RADIUS_METERS,
+      longitude,
+      latitude,
+    ]);
+
+    if (nearby.length > 0) {
+      const updateQuery = `
+        UPDATE Alerts
+        SET cantidad = cantidad + 1, fechaCreacion = UTC_TIMESTAMP()
+        WHERE alertId = ?;
+      `;
+      await pool.execute(updateQuery, [nearby[0].alertId]);
+
+      return res.status(200).json({
+        message: "Alerta cercana actualizada exitosamente.",
+        alertId: nearby[0].alertId,
+      });
+    }
+
+    const query = `
+      INSERT INTO Alerts (email, latitude, longitude, cantidad)
+      VALUES (?, ?, ?, 1);
     `;
 
-    const pool = await poolPromise;
     const [result] = await pool.execute(query, [email, latitude, longitude]);
 
     res.status(201).json({
@@ -66,7 +97,7 @@ router.get("/", async (req, res) => {
     const userLon = parseFloat(lon);
 
     const query = `
-          SELECT email, latitude, longitude,
+          SELECT email, latitude, longitude, cantidad,
             ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
           FROM Alerts
           HAVING distanceInKm <= ?
