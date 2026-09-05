@@ -1,4 +1,3 @@
-require('dotenv').config();
 const sql = require('mysql2/promise');
 const { Connector } = require("@google-cloud/cloud-sql-connector");
 const dbConfig = JSON.parse(process.env.DB_CONFIG);

@@ -3,8 +3,14 @@ const router = express.Router();
 const { poolPromise } = require("../dbConfig");
 const bcrypt = require("bcryptjs");
 const SALT_ROUNDS = 10;
+const requireRole = require("../middleware/requireRole");
+const {authenticateMember, signMemberToken} = require("../middleware/jwt")
 
-router.put("/togglePosition/:email", async (req, res) => {
+router.put(
+  "/togglePosition/:email",
+  authenticateMember, 
+  requireRole("Jefe de Estacion"),
+  async (req, res) => {
   try {
     const { email } = req.params;
 
@@ -41,7 +47,7 @@ router.put("/togglePosition/:email", async (req, res) => {
   }
 });
 
-router.get("/getByStation/:station", async (req, res) => {
+router.get("/getByStation/:station", authenticateMember, async (req, res) => {
   try {
     const { station } = req.params;
 
@@ -56,7 +62,7 @@ router.get("/getByStation/:station", async (req, res) => {
     if (members.length === 0) {
       return res
         .status(404)
-        .json({ msg: "No se encontraron Members para esa estacion." });
+        .json({ msg: "No se encontraron miembros para esa estacion." });
     }
 
     const sanitized = members.map(({ code, ...rest }) => rest);
@@ -90,7 +96,7 @@ const generateUniqueCode = async (pool) => {
   );
 };
 
-router.post("/", async (req, res) => {
+router.post("/", authenticateMember, async (req, res) => {
   try {
     const { email, fullName, phone, position, station } = req.body;
 
@@ -159,8 +165,11 @@ router.post("/login", async (req, res) => {
 
     if (matched) {
       const { code: _codeHash, ...miembro } = matched;
+      const token = signMemberToken(miembro);
+
       res.status(200).json({
         msg: "Ingreso exitoso.",
+        token,
         miembro,
       });
     } else {
@@ -171,7 +180,11 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.put("/resetCode", async (req, res) => {
+router.put(
+  "/resetCode",
+  authenticateMember,
+  requireRole("Jefe de Estacion"),
+  async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -206,23 +219,32 @@ router.put("/resetCode", async (req, res) => {
   }
 });
 
-router.put("/update/:email", async (req, res) => {
+router.put("/update/:email", authenticateMember, async (req, res) => {
   try {
     const { email } = req.params;
-    const { fullName, phone, station } = req.body;
+    const { fullName, phone } = req.body;
 
     if (!email) {
       return res.status(400).json({ msg: "El email es requerido." });
     }
 
-    if (!fullName || !phone || !station) {
-      return res.status(400).json({
-        msg: "Faltan campos: nombre completo, teléfono y estación son requeridos.",
+    const isSelf = req.member.email === email;
+    const isJefe = req.member.position === "Jefe de Estacion";
+
+    if (!isSelf && !isJefe) {
+      return res.status(403).json({
+        msg: "No tenés permiso para editar los datos de otro miembro.",
       });
     }
 
-    const fields = ["fullName = ?", "phone = ?", "station = ?"];
-    const values = [fullName, phone, station];
+    if (!fullName || !phone) {
+      return res.status(400).json({
+        msg: "Faltan campos: nombre completo y teléfono son requeridos.",
+      });
+    }
+
+    const fields = ["fullName = ?", "phone = ?"];
+    const values = [fullName, phone];
 
     const pool = await poolPromise;
     const [existing] = await pool.execute(

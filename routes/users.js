@@ -1,12 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig");
+const authenticateUser = require("../middleware/authenticateUser");
 
-router.post("/register", async (req, res) => {
+router.post("/register", authenticateUser, async (req, res) => {
   try {
     const {
-      firebaseUid,
-      email,
       fullName,
       phone,
       birthDate,
@@ -14,9 +13,12 @@ router.post("/register", async (req, res) => {
       telegramUsername,
     } = req.body;
 
-    if (!email || !fullName || !phone || !birthDate || !bloodType) {
+    const firebaseUid = req.user.uid;
+    const email = req.user.email;
+
+    if (!fullName || !phone || !birthDate || !bloodType) {
       return res.status(400).json({
-        msg: "Email, nombre completo, fecha de nacimiento, teléfono y tipo de sangre son requeridos.",
+        msg: "Nombre completo, fecha de nacimiento, teléfono y tipo de sangre son requeridos.",
       });
     }
 
@@ -55,12 +57,18 @@ router.post("/register", async (req, res) => {
   }
 });
 
-router.get("/getByEmail/:email", async (req, res) => {
+router.get("/getByEmail/:email", authenticateUser, async (req, res) => {
   try {
     const { email } = req.params;
 
     if (!email) {
       return res.status(400).json({ msg: "El email es requerido." });
+    }
+
+    if (req.user.email !== email) {
+      return res
+        .status(403)
+        .json({ msg: "Sin permiso para ver este perfil." });
     }
 
     const pool = await poolPromise;
@@ -79,7 +87,7 @@ router.get("/getByEmail/:email", async (req, res) => {
   }
 });
 
-router.put("/update/:email", async (req, res) => {
+router.put("/update/:email", authenticateUser, async (req, res) => {
   try {
     const { email } = req.params;
     const { fullName, phone, birthDate, bloodType, telegramUsername } =
@@ -87,6 +95,12 @@ router.put("/update/:email", async (req, res) => {
 
     if (!email) {
       return res.status(400).json({ msg: "El email es requerido." });
+    }
+
+    if (req.user.email !== email) {
+      return res
+        .status(403)
+        .json({ msg: "Sin permiso para editar este perfil." });
     }
 
     if (!fullName || !phone || !birthDate || !bloodType || !telegramUsername) {

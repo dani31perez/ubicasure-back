@@ -1,11 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig");
+const {authenticateMember} = require("../middleware/jwt")
 
-router.post("/", async (req, res) => {
-  const { stationName, memberEmail, userEmail, content } = req.body;
+router.post("/",  authenticateMember, async (req, res) => {
+  const { userEmail, content } = req.body;
 
-  if (!stationName || !memberEmail || !userEmail || !content) {
+  const memberEmail = req.member.email;
+  const stationName = req.member.station;
+
+  if (!userEmail || !content) {
     return res.status(400).json({
       error:
         "Faltan los campos nombre de la estacion, email del miembro, email del usuario  o contenido.",
@@ -33,7 +37,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.get("/getByStation", async (req, res) => {
+router.get("/getByStation", authenticateMember, async (req, res) => {
   const { stationName } = req.query;
 
   if (!stationName) {

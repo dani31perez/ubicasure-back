@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const { poolPromise } = require("../dbConfig"); // Asegúrate que la ruta sea correcta
+const { poolPromise } = require("../dbConfig"); 
+const authenticateUser = require("../middleware/authenticateUser");
 
 async function deleteOldAlerts() {
   try {
@@ -18,8 +19,10 @@ async function deleteOldAlerts() {
   }
 }
 
-router.post("/", async (req, res) => {
-  const { email, latitude, longitude } = req.body;
+router.post("/", authenticateUser,  async (req, res) => {
+  const { latitude, longitude } = req.body;
+  const email = req.user.email;
+
   await deleteOldAlerts();
   if (!email || !latitude || !longitude) {
     return res
