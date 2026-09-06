@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { poolPromise } = require("../dbConfig");
 const authenticateUser = require("../middleware/authenticateUser");
-const authenticateMember = require("../middleware/authenticateMember");
+const {authenticateMember} = require("../middleware/jwt");
 
 router.post("/register", authenticateUser, async (req, res) => {
   try {
