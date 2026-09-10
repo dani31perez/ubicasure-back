@@ -4,27 +4,77 @@ const { poolPromise } = require("../dbConfig");
 const authenticateUser = require("../middleware/authenticateUser");
 const ALERT_CLUSTER_RADIUS_METERS = 100;
 
-async function deleteOldAlerts() {
+function toRad(value) {
+  return (value * Math.PI) / 180;
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function clusterAlerts(alerts, radiusMeters) {
+  const used = new Array(alerts.length).fill(false);
+  const clusters = [];
+
+  for (let i = 0; i < alerts.length; i++) {
+    if (used[i]) continue;
+    const group = [alerts[i]];
+    used[i] = true;
+
+    for (let j = i + 1; j < alerts.length; j++) {
+      if (used[j]) continue;
+      const distance = haversineDistanceMeters(
+        alerts[i].latitude,
+        alerts[i].longitude,
+        alerts[j].latitude,
+        alerts[j].longitude
+      );
+      if (distance <= radiusMeters) {
+        group.push(alerts[j]);
+        used[j] = true;
+      }
+    }
+
+    clusters.push(group);
+  }
+
+  return clusters.map((group) => ({
+    latitude: group.reduce((sum, a) => sum + a.latitude, 0) / group.length,
+    longitude: group.reduce((sum, a) => sum + a.longitude, 0) / group.length,
+    reliability: Math.max(...group.map((a) => a.reliability)),
+    cantidad: group.length,
+  }));
+}
+
+async function deactivateOldAlerts() {
   try {
     const query = `
-      DELETE FROM Alerts
-      WHERE fechaCreacion < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR);
+      UPDATE Alerts
+      SET active = 0
+      WHERE active = 1
+        AND fechaCreacion < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR);
     `;
     const pool = await poolPromise;
     await pool.execute(query);
   } catch (error) {
-    console.error("Error al borrar alertas en MySQL:", error);
+    console.error("Error al desactivar alertas en MySQL:", error);
     throw new Error(
-      `Error en el proceso de borrado de alertas: ${error.message}`
+      `Error en el proceso de desactivación de alertas: ${error.message}`
     );
   }
 }
 
-router.post("/", authenticateUser,  async (req, res) => {
+router.post("/", authenticateUser, async (req, res) => {
   const { latitude, longitude } = req.body;
   const email = req.user.email;
-
-  await deleteOldAlerts();
+  await deactivateOldAlerts();
   if (!email || !latitude || !longitude) {
     return res
       .status(400)
@@ -34,48 +84,29 @@ router.post("/", authenticateUser,  async (req, res) => {
   try {
     const pool = await poolPromise;
 
-    const nearbyQuery = `
-      SELECT alertId
-      FROM Alerts
-      WHERE ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) <= ?
-      ORDER BY ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) ASC
-      LIMIT 1;
-    `;
-    const [nearby] = await pool.execute(nearbyQuery, [
-      longitude,
-      latitude,
-      ALERT_CLUSTER_RADIUS_METERS,
-      longitude,
-      latitude,
-    ]);
+    const [userResult] = await pool.execute(
+      "SELECT reliability FROM Users WHERE email = ?",
+      [email]
+    );
 
-    if (nearby.length > 0) {
-      const updateQuery = `
-        UPDATE Alerts
-        SET cantidad = cantidad + 1, fechaCreacion = UTC_TIMESTAMP()
-        WHERE alertId = ?;
-      `;
-      await pool.execute(updateQuery, [nearby[0].alertId]);
-
-      return res.status(200).json({
-        message: "Alerta cercana actualizada exitosamente.",
-        alertId: nearby[0].alertId,
-      });
+    if (userResult.length === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado." });
     }
 
-    const query = `
-      INSERT INTO Alerts (email, latitude, longitude, cantidad)
-      VALUES (?, ?, ?, 1);
-    `;
+    const reliability = userResult[0].reliability;
 
-    const [result] = await pool.execute(query, [email, latitude, longitude]);
+    const query = `
+      INSERT INTO Alerts (email, latitude, longitude, reliability)
+      VALUES (?, ?, ?, ?);
+    `;
+    const [result] = await pool.execute(query, [email, latitude, longitude, reliability]);
 
     res.status(201).json({
-      message: "Alerta creada exitosamente.",
+      message: "Alerta registrada exitosamente.",
       alertId: result.insertId,
     });
   } catch (error) {
-    console.error("Error al crear alerta en MySQL Server:", error);
+    console.error("Error al crear alerta en MySQL:", error);
     res
       .status(500)
       .json({ error: "Error interno del servidor.", details: error.message });
@@ -85,7 +116,7 @@ router.post("/", authenticateUser,  async (req, res) => {
 router.get("/", async (req, res) => {
   const { lat, lon } = req.query;
   const searchRadiusKm = 5;
-  await deleteOldAlerts();
+  await deactivateOldAlerts();
   if (!lat || !lon) {
     return res
       .status(400)
@@ -97,17 +128,20 @@ router.get("/", async (req, res) => {
     const userLon = parseFloat(lon);
 
     const query = `
-          SELECT email, latitude, longitude, cantidad,
-            ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
-          FROM Alerts
-          HAVING distanceInKm <= ?
-          ORDER BY distanceInKm;
-        `;
+      SELECT latitude, longitude, reliability,
+        ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
+      FROM Alerts
+      WHERE active = 1
+      HAVING distanceInKm <= ?
+      ORDER BY distanceInKm;
+    `;
 
     const pool = await poolPromise;
-    const [result] = await pool.execute(query, [userLon, userLat, searchRadiusKm]);
+    const [rows] = await pool.execute(query, [userLon, userLat, searchRadiusKm]);
 
-    res.status(200).json(result);
+    const clustered = clusterAlerts(rows, ALERT_CLUSTER_RADIUS_METERS);
+
+    res.status(200).json(clustered);
   } catch (error) {
     console.error("Error al buscar alertas cercanas:", error);
     res
