@@ -45,12 +45,7 @@ function clusterAlerts(alerts, radiusMeters) {
     clusters.push(group);
   }
 
-  return clusters.map((group) => ({
-    latitude: group.reduce((sum, a) => sum + a.latitude, 0) / group.length,
-    longitude: group.reduce((sum, a) => sum + a.longitude, 0) / group.length,
-    reliability: Math.max(...group.map((a) => a.reliability)),
-    cantidad: group.length,
-  }));
+  return clusters.map((group) => (group.length === 1 ? group[0] : group));
 }
 
 async function deactivateOldAlerts() {
@@ -139,7 +134,14 @@ router.get("/", async (req, res) => {
     const pool = await poolPromise;
     const [rows] = await pool.execute(query, [userLon, userLat, searchRadiusKm]);
 
-    const clustered = clusterAlerts(rows, ALERT_CLUSTER_RADIUS_METERS);
+    const normalizedRows = rows.map((row) => ({
+      ...row,
+      latitude: Number(row.latitude),
+      longitude: Number(row.longitude),
+      reliability: Number(row.reliability),
+    }));
+
+    const clustered = clusterAlerts(normalizedRows, ALERT_CLUSTER_RADIUS_METERS);
 
     res.status(200).json(clustered);
   } catch (error) {
