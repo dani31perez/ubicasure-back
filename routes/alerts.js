@@ -123,7 +123,7 @@ router.get("/", async (req, res) => {
     const userLon = parseFloat(lon);
 
     const query = `
-      SELECT latitude, longitude, reliability,
+      SELECT latitude, longitude, reliability, email,
         ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
       FROM Alerts
       WHERE active = 1
