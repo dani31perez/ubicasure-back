@@ -3,6 +3,10 @@ const router = express.Router();
 const { poolPromise } = require("../dbConfig"); 
 const authenticateUser = require("../middleware/authenticateUser");
 const ALERT_CLUSTER_RADIUS_METERS = 100;
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
+const { addFiles } = require("../utils.js");
+const {authenticateMember, signMemberToken} = require("../middleware/jwt")
 
 function toRad(value) {
   return (value * Math.PI) / 180;
@@ -66,7 +70,7 @@ async function deactivateOldAlerts() {
   }
 }
 
-router.post("/", authenticateUser, async (req, res) => {
+router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
   const { latitude, longitude } = req.body;
   const email = req.user.email;
   await deactivateOldAlerts();
@@ -90,11 +94,22 @@ router.post("/", authenticateUser, async (req, res) => {
 
     const reliability = userResult[0].reliability;
 
+    let imageUrls = [];
+    if (req.files && req.files.length > 0) {
+      imageUrls = await addFiles(req.files, "alert_images", email);
+    }
+
     const query = `
-      INSERT INTO Alerts (email, latitude, longitude, reliability)
-      VALUES (?, ?, ?, ?);
+      INSERT INTO Alerts (email, latitude, longitude, reliability, images)
+      VALUES (?, ?, ?, ?, ?);
     `;
-    const [result] = await pool.execute(query, [email, latitude, longitude, reliability]);
+    const [result] = await pool.execute(query, [
+      email,
+      latitude,
+      longitude,
+      reliability,
+      JSON.stringify(imageUrls),
+    ]);
 
     res.status(201).json({
       message: "Alerta registrada exitosamente.",
@@ -149,6 +164,36 @@ router.get("/", async (req, res) => {
     res
       .status(500)
       .json({ error: "Error interno del servidor.", details: error.message });
+  }
+});
+
+router.put("/attend/:alertId", authenticateMember, async (req, res) => {
+  const { alertId } = req.params;
+  const station = req.member.station;
+
+  try {
+    const pool = await poolPromise;
+    const [rows] = await pool.execute(
+      "SELECT attendingStations FROM Alerts WHERE alertId = ?",
+      [alertId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Alerta no encontrada." });
+    }
+
+    const current = rows[0].attendingStations || [];
+    if (!current.includes(station)) {
+      current.push(station);
+      await pool.execute(
+        "UPDATE Alerts SET attendingStations = ? WHERE alertId = ?",
+        [JSON.stringify(current), alertId]
+      );
+    }
+
+    res.status(200).json({ message: "Estación agregada.", attendingStations: current });
+  } catch (error) {
+    res.status(500).json({ error: error.message, details: error.message });
   }
 });
 
