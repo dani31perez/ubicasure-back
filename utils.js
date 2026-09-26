@@ -46,4 +46,25 @@ const addFiles = async (files, storagePath, id) => {
   );
 };
 
-module.exports = { deleteFile, addFiles };
+async function detectIncident(imageUrl) {
+  const response = await fetch(`${process.env.AI_SERVICE_URL}/analyze`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.AI_SERVICE_SECRET,
+    },
+    body: JSON.stringify({ image_url: imageUrl }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    const error = new Error("El servicio de análisis devolvió un error.");
+    error.status = response.status;
+    error.details = errorBody;
+    throw error;
+  }
+
+  return response.json();
+}
+
+module.exports = { deleteFile, addFiles, detectIncident };

@@ -5,7 +5,7 @@ const authenticateUser = require("../middleware/authenticateUser");
 const ALERT_CLUSTER_RADIUS_METERS = 100;
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
-const { addFiles } = require("../utils.js");
+const { addFiles, detectIncident } = require("../utils.js");
 const {authenticateMember, signMemberToken} = require("../middleware/jwt")
 
 function toRad(value) {
@@ -111,9 +111,32 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
       JSON.stringify(imageUrls),
     ]);
 
+    const alertId = result.insertId;
+
+    let analysis = [];
+    if (imageUrls.length > 0) {
+      analysis = await Promise.all(
+        imageUrls.map(async (url) => {
+          try {
+            return await detectIncident(url);
+          } catch (error) {
+            console.error("Error al analizar imagen de alerta:", error);
+            return null;
+          }
+        })
+      );
+
+      await pool.execute("UPDATE Alerts SET analysis = ? WHERE alertId = ?", [
+        JSON.stringify(analysis),
+        alertId,
+      ]);
+    }
+
     res.status(201).json({
       message: "Alerta registrada exitosamente.",
-      alertId: result.insertId,
+      alertId,
+      images: imageUrls,
+      analysis,
     });
   } catch (error) {
     console.error("Error al crear alerta en MySQL:", error);
@@ -194,6 +217,29 @@ router.put("/attend/:alertId", authenticateMember, async (req, res) => {
     res.status(200).json({ message: "Estación agregada.", attendingStations: current });
   } catch (error) {
     res.status(500).json({ error: error.message, details: error.message });
+  }
+});
+
+router.get("/getbyStation/:station", authenticateMember, async (req, res) => {
+  const { station } = req.params;
+
+  try {
+    const pool = await poolPromise;
+    const query = `
+      SELECT alertId, latitude, longitude, reliability, email, attendingStations, images, fechaCreacion
+      FROM Alerts
+      WHERE active = 1
+        AND JSON_CONTAINS(attendingStations, JSON_QUOTE(?))
+      ORDER BY fechaCreacion DESC;
+    `;
+    const [rows] = await pool.execute(query, [station]);
+
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error("Error al buscar alertas por estación:", error);
+    res
+      .status(500)
+      .json({ error: "Error interno del servidor.", details: error.message });
   }
 });
 
