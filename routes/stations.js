@@ -1,40 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const axios = require("axios");
+const { fetchNearbyPlaces, fetchPlaceDetails } = require("../utils");
 require("dotenv").config();
 
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
-
-async function fetchPlaceDetails(placeId, apiKey) {
-  const fields = "name,vicinity,formatted_phone_number,opening_hours,geometry";
-  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=${fields}&language=es`;
-
-  try {
-    const response = await axios.get(url);
-    if (response.data.status === "OK") {
-      return response.data.result;
-    }
-    return null;
-  } catch (error) {
-    console.error(`Error fetching details for ${placeId}:`, error.message);
-    return null;
-  }
-}
-
-async function fetchNearbyPlaces(type, location, radius, apiKey) {
-  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location}&radius=${radius}&type=${type}&key=${apiKey}&language=es`;
-
-  try {
-    const response = await axios.get(url);
-    if (response.data.status === "OK") {
-      return response.data.results;
-    }
-    return [];
-  } catch (error) {
-    console.error(`Error fetching ${type}:`, error.message);
-    throw new Error("Failed to fetch data from Google Maps API.");
-  }
-}
 
 router.get("/getApiKey", async (_req, res) => {
   res.status(200).json(process.env.GOOGLE_MAPS_API_KEY);

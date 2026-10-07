@@ -1,10 +1,41 @@
 const express = require("express");
 const router = express.Router();
-const { poolPromise } = require("../dbConfig");
+const { poolPromise } = require("../config/dbConfig");
 const bcrypt = require("bcryptjs");
 const SALT_ROUNDS = 10;
 const requireRole = require("../middleware/requireRole");
-const {authenticateMember, signMemberToken} = require("../middleware/jwt")
+const {authenticateMember, signMemberToken} = require("../middleware/jwt");
+
+router.put("/fcmToken", authenticateMember, async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+
+    if (!fcmToken) {
+      return res.status(400).json({
+        error: "Falta el token FCM.",
+      });
+    }
+
+    const member = req.member;
+
+    const pool = await poolPromise;
+
+    await pool.execute(
+      "UPDATE Members SET fcmToken = ? WHERE email = ?",
+      [fcmToken, member.email]
+    );
+
+    return res.status(200).json({
+      message: "Token FCM actualizado correctamente.",
+    });
+  } catch (error) {
+    console.error("Error al guardar token FCM:", error);
+
+    return res.status(500).json({
+      error: "Error interno del servidor.",
+    });
+  }
+});
 
 router.put(
   "/togglePosition/:email",
@@ -55,9 +86,7 @@ router.get("/getByStation/:station", authenticateMember, async (req, res) => {
       return res.status(400).json({ msg: "La estacion es requerida" });
     }
 
-    const findQuery = "SELECT * FROM Members WHERE station = ?";
-    const pool = await poolPromise;
-    const [members] = await pool.execute(findQuery, [station]);
+    const members = await pool.execute(findQuery, [station]);
 
     if (members.length === 0) {
       return res
@@ -65,9 +94,7 @@ router.get("/getByStation/:station", authenticateMember, async (req, res) => {
         .json({ msg: "No se encontraron miembros para esa estacion." });
     }
 
-    const sanitized = members.map(({ code, ...rest }) => rest);
-
-    res.status(200).send(sanitized);
+    res.status(200).send(members);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

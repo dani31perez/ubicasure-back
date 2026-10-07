@@ -1,15 +1,119 @@
 const express = require("express");
 const router = express.Router();
-const { poolPromise } = require("../dbConfig"); 
+const { poolPromise } = require("../config/dbConfig.js"); 
 const authenticateUser = require("../middleware/authenticateUser");
-const ALERT_CLUSTER_RADIUS_METERS = 100;
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
-const { addFiles, detectIncident } = require("../utils.js");
-const {authenticateMember, signMemberToken} = require("../middleware/jwt")
+const { addFiles, detectIncident, fetchNearbyPlaces, sendPushNotifications, getMembersByStation } = require("../utils.js");
+const {authenticateMember} = require("../middleware/jwt");
+const { sendSmsNotifications } = require("../config/textBee.js");
+const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 
 function toRad(value) {
   return (value * Math.PI) / 180;
+}
+
+async function getNearbyMembers(location) {
+  const [nearbyFireStations, nearbyPoliceStations] = await Promise.all([
+    fetchNearbyPlaces(
+      "fire_station",
+      location,
+      100,
+      googleMapsApiKey
+    ),
+    fetchNearbyPlaces(
+      "police",
+      location,
+      100,
+      googleMapsApiKey
+    ),
+  ]);
+
+
+  const stations = [
+    ...nearbyFireStations.map(station => station.name),
+    ...nearbyPoliceStations.map(station => station.name),
+  ];
+
+  const members = (
+    await Promise.all(
+      stations.map(station => getMembersByStation(station))
+    )
+  ).flat();
+
+  return members;
+}
+
+async function getNearbyAlerts(latitude, longitude, radiusKm) {
+  const query = `
+    SELECT
+      alertId,
+      latitude,
+      longitude,
+      reliability,
+      email,
+      images,
+      analysis,
+      ST_Distance_Sphere(
+        POINT(longitude, latitude),
+        POINT(?, ?)
+      ) / 1000 AS distanceInKm
+    FROM Alerts
+    WHERE active = 1
+    HAVING distanceInKm <= ?
+    ORDER BY distanceInKm;
+  `;
+
+  const pool = await poolPromise;
+
+  const [rows] = await pool.execute(query, [
+    longitude,
+    latitude,
+    radiusKm,
+  ]);
+
+  return rows.map((row) => ({
+    ...row,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    reliability: Number(row.reliability),
+    distanceInKm: Number(row.distanceInKm),
+  }));
+}
+
+function getAlertLevel(hasNearbyAlert, hasIncident) {
+  if (hasNearbyAlert && hasIncident) {
+    return 3;
+  }
+
+  if (hasIncident) {
+    return 2;
+  }
+
+  if (hasNearbyAlert) {
+    return 1;
+  }
+
+  return 0;
+}
+
+async function sendAlertNotifications(level, members, alertData) {
+  if (level === 0) {
+    return;
+  }
+
+  if (level === 1) {
+    await sendPushNotifications(members, alertData);
+    return;
+  }
+
+  if (level === 2) {
+    return;
+  }
+
+  if (level === 3) {
+    await sendSmsNotifications(members, alertData)
+  }
 }
 
 function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
@@ -81,6 +185,16 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
   }
 
   try {
+    const userLat = parseFloat(latitude);
+    const userLon = parseFloat(longitude);
+
+    const nearbyAlerts = await getNearbyAlerts(
+      userLat,
+      userLon,
+      0.1
+    );
+
+    const hasNearbyAlert = nearbyAlerts.length > 0;
     const pool = await poolPromise;
 
     const [userResult] = await pool.execute(
@@ -132,6 +246,27 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
       ]);
     }
 
+    const hasIncident = analysis.some(
+      result => result?.incident_detected === true
+    );
+
+    const level = getAlertLevel(hasNearbyAlert, hasIncident);
+
+
+    if (level > 0) {
+      const nearbyMembers = await getNearbyMembers(
+        `${userLat},${userLon}`
+      );
+
+      await sendAlertNotifications(level, nearbyMembers, {
+        alertId,
+        email,
+        latitude: userLat,
+        longitude: userLon,
+        analysis,
+      });
+    }
+
     res.status(201).json({
       message: "Alerta registrada exitosamente.",
       alertId,
@@ -157,29 +292,8 @@ router.get("/", async (req, res) => {
   }
 
   try {
-    const userLat = parseFloat(lat);
-    const userLon = parseFloat(lon);
-
-    const query = `
-      SELECT latitude, longitude, reliability, email,
-        ST_Distance_Sphere(POINT(longitude, latitude), POINT(?, ?)) / 1000 AS distanceInKm
-      FROM Alerts
-      WHERE active = 1
-      HAVING distanceInKm <= ?
-      ORDER BY distanceInKm;
-    `;
-
-    const pool = await poolPromise;
-    const [rows] = await pool.execute(query, [userLon, userLat, searchRadiusKm]);
-
-    const normalizedRows = rows.map((row) => ({
-      ...row,
-      latitude: Number(row.latitude),
-      longitude: Number(row.longitude),
-      reliability: Number(row.reliability),
-    }));
-
-    const clustered = clusterAlerts(normalizedRows, ALERT_CLUSTER_RADIUS_METERS);
+    const nearbyAlerts = await getNearbyAlerts(userLat, userLon, 5);
+    const clustered = clusterAlerts(nearbyAlerts, searchRadiusKm);
 
     res.status(200).json(clustered);
   } catch (error) {

@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { poolPromise } = require("../dbConfig");
+const { poolPromise } = require("../config/dbConfig");
 const authenticateUser = require("../middleware/authenticateUser");
 const {authenticateMember} = require("../middleware/jwt");
 
