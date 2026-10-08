@@ -7,12 +7,31 @@ const telegramConfig = JSON.parse(process.env.TELEGRAM_CONFIG);
 const telegramBotUsername = "UbicasureAlertsBot";
 
 async function createTelegramLink(email, station) {
-  const token = crypto.randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
   const pool = await poolPromise;
 
-  await pool.execute(
+  const [members] = await pool.execute(
+    `
+      SELECT telegramChatId
+      FROM Members
+      WHERE email = ?
+        AND station = ?
+      LIMIT 1
+    `,
+    [email, station]
+  );
+
+  if (members.length === 0) {
+    throw new Error("No se encontró el miembro.");
+  }
+
+  if (members[0].telegramChatId) {
+    throw new Error("La cuenta de Telegram ya está vinculada.");
+  }
+
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+  const [result] = await pool.execute(
     `
       UPDATE Members
       SET telegramLinkToken = ?,
@@ -23,12 +42,14 @@ async function createTelegramLink(email, station) {
     [token, expiresAt, email, station]
   );
 
+  if (result.affectedRows === 0) {
+    throw new Error("No se pudo generar el enlace de Telegram.");
+  }
+
   return `https://t.me/${telegramBotUsername}?start=${token}`;
 }
 
 async function processTelegramUpdate(update) {
-    console.log("asdfasdf");
-    console.log(JSON.stringify(update, null, 2));
   if (!update.message) {
     return;
   }
@@ -63,8 +84,14 @@ async function processTelegramUpdate(update) {
 
   if (members.length === 0) {
     console.log("Token de vinculación de Telegram inválido o expirado.");
+
+    await sendTelegramMessage(
+        chatId,
+        "El enlace de vinculación es inválido o ha expirado. Genera un nuevo enlace desde Ubicasure."
+    );
+
     return;
-  }
+    }
 
   const { email, station } = members[0];
 
@@ -86,7 +113,7 @@ async function processTelegramUpdate(update) {
 
   await sendTelegramMessage(
     chatId,
-    "Ubicasure: tu cuenta de Telegram ha sido vinculada correctamente."
+    "Ubicasure: tu cuenta de Telegram ha sido vinculada correctamente. Ahora recibirás tus alertas por este medio."
   );
 }
 
@@ -142,6 +169,35 @@ async function sendTelegramNotification(members, alertData) {
       result.reason.response?.data ||
       result.reason.message
     );
+  });
+
+  return results;
+}
+
+async function sendTelegramNotification(members, alertData) {
+  const chatIds = [
+    ...new Set(members.map((member) => member.telegramChatId).filter(Boolean)),
+  ];
+
+  if (chatIds.length === 0) {
+    console.log("No hay miembros vinculados a Telegram.");
+    return;
+  }
+
+  const message =
+    "Ubicasure: Revisa la aplicación, está pasando una alerta cerca.";
+
+  const results = await Promise.allSettled(
+    chatIds.map((chatId) => sendTelegramMessage(chatId, message))
+  );
+
+  const successful = results.filter((r) => r.status === "fulfilled");
+  const failed = results.filter((r) => r.status === "rejected");
+
+  console.log(`Telegram: ${successful.length} enviados, ${failed.length} fallidos.`);
+
+  failed.forEach((r) => {
+    console.error("Error Telegram:", r.reason.response?.data || r.reason.message);
   });
 
   return results;

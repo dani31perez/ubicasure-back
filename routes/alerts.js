@@ -7,6 +7,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const { addFiles, detectIncident, fetchNearbyPlaces, sendPushNotifications, getMembersByStation } = require("../utils.js");
 const {authenticateMember} = require("../middleware/jwt");
 const { sendSmsNotifications } = require("../config/textBee.js");
+const { sendTelegramNotification } = require("../config/telegram.js");
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 
 function toRad(value) {
@@ -108,6 +109,7 @@ async function sendAlertNotifications(level, members, alertData) {
   }
 
   if (level === 2) {
+    await sendTelegramNotification(members, alertData);
     return;
   }
 
