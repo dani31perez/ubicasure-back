@@ -5,6 +5,7 @@ const bcrypt = require("bcryptjs");
 const SALT_ROUNDS = 10;
 const requireRole = require("../middleware/requireRole");
 const {authenticateMember, signMemberToken} = require("../middleware/jwt");
+const {createTelegramLink, processTelegramUpdate} = require("../config/telegram.js");
 
 router.put("/fcmToken", authenticateMember, async (req, res) => {
   try {
@@ -29,11 +30,7 @@ router.put("/fcmToken", authenticateMember, async (req, res) => {
       message: "Token FCM actualizado correctamente.",
     });
   } catch (error) {
-    console.error("Error al guardar token FCM:", error);
-
-    return res.status(500).json({
-      error: "Error interno del servidor.",
-    });
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -291,6 +288,31 @@ router.put("/update/:email", authenticateMember, async (req, res) => {
     res.status(200).json({ msg: "Miembro actualizado exitosamente." });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/link", authenticateMember, async (req, res) => {
+  try {
+    const { email, station } = req.member;
+
+    const telegramLink = await createTelegramLink(
+      email,
+      station
+    );
+
+    return res.status(200).json({ success: true, telegramLink,});
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/webhook", async (req, res) => {
+  try {
+    await processTelegramUpdate(req.body);
+
+    return res.sendStatus(200);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 });
 
