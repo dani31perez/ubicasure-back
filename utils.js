@@ -1,6 +1,7 @@
 const { Storage } = require("@google-cloud/storage");
 const storage = new Storage();
 const bucketName = "ubicasure-chat-media";
+const admin = require("./config/firebaseConfig");
 const bucket = storage.bucket(bucketName);
 const axios = require("axios");
 const { poolPromise } = require("./config/dbConfig");

@@ -78,6 +78,7 @@ router.put(
 router.get("/getByStation/:station", authenticateMember, async (req, res) => {
   try {
     const { station } = req.params;
+    const pool = await poolPromise;
 
     if (!station) {
       return res.status(400).json({ msg: "La estacion es requerida" });

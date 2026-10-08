@@ -292,6 +292,8 @@ router.get("/", async (req, res) => {
       .status(400)
       .json({ error: "Faltan los parámetros de consulta lat y lon." });
   }
+  const userLat = parseFloat(lat);
+  const userLon = parseFloat(lon);
 
   try {
     const nearbyAlerts = await getNearbyAlerts(userLat, userLon, 5);
