@@ -84,6 +84,12 @@ router.get("/getByStation/:station", authenticateMember, async (req, res) => {
       return res.status(400).json({ msg: "La estacion es requerida" });
     }
 
+    const findQuery = `
+      SELECT email, fullName, phone, position, station
+      FROM Members
+      WHERE station = ?
+    `;
+
     const members = await pool.execute(findQuery, [station]);
 
     if (members.length === 0) {
