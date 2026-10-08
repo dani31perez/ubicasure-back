@@ -90,7 +90,7 @@ router.get("/getByStation/:station", authenticateMember, async (req, res) => {
       WHERE station = ?
     `;
 
-    const members = await pool.execute(findQuery, [station]);
+    const [members] = await pool.execute(findQuery, [station]);
 
     if (members.length === 0) {
       return res
