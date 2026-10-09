@@ -136,7 +136,7 @@ async function sendPushNotifications(members, alertData) {
   };
 
   try {
-    const response = await getMessaging().FidMulticastMessage(message);
+    const response = await getMessaging().sendEachForMulticast(message);
 
     return response;
   } catch (error) {
