@@ -1,7 +1,7 @@
 const { Storage } = require("@google-cloud/storage");
 const storage = new Storage();
 const bucketName = "ubicasure-chat-media";
-const admin = require("./config/firebaseConfig");
+const { getMessaging } = require("firebase-admin/messaging");
 const bucket = storage.bucket(bucketName);
 const axios = require("axios");
 const { poolPromise } = require("./config/dbConfig");
@@ -136,9 +136,7 @@ async function sendPushNotifications(members, alertData) {
   };
 
   try {
-    const response = await admin
-      .messaging()
-      .sendEachForMulticast(message);
+    const response = await getMessaging().FidMulticastMessage(message);
 
     return response;
   } catch (error) {
