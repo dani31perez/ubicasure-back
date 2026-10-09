@@ -19,13 +19,13 @@ async function getNearbyMembers(location) {
     fetchNearbyPlaces(
       "fire_station",
       location,
-      100,
+      1000,
       googleMapsApiKey
     ),
     fetchNearbyPlaces(
       "police",
       location,
-      100,
+      1000,
       googleMapsApiKey
     ),
   ]);
