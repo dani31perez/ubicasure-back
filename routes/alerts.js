@@ -193,7 +193,7 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
     const nearbyAlerts = await getNearbyAlerts(
       userLat,
       userLon,
-      0.1
+      5
     );
 
     const hasNearbyAlert = nearbyAlerts.length > 0;
