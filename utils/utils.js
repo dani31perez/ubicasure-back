@@ -4,7 +4,7 @@ const bucketName = "ubicasure-chat-media";
 const { getMessaging } = require("firebase-admin/messaging");
 const bucket = storage.bucket(bucketName);
 const axios = require("axios");
-const { poolPromise } = require("./config/dbConfig");
+const { poolPromise } = require("../config/dbConfig");
 
 /*
   Elimina un archivo de firebase storage, usando la ruta completa y la carpeta donde se encuentra.

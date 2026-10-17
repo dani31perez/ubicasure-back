@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { fetchNearbyPlaces, fetchPlaceDetails } = require("../utils");
+const { fetchNearbyPlaces, fetchPlaceDetails } = require("../utils/utils");
 require("dotenv").config();
 
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;

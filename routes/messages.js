@@ -5,7 +5,7 @@ const { Firestore } = require("@google-cloud/firestore");
 const db = new Firestore();
 const messageRef = db.collection("messages");
 const upload = multer({ storage: multer.memoryStorage() });
-const { addFiles } = require("../utils.js");
+const { addFiles } = require("../utils/utils.js");
 
 /*
   POST /

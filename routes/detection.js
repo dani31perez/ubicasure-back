@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const {authenticateMember} = require("../middleware/jwt");
-const { detectIncident } = require("../utils");
+const { detectIncident } = require("../utils/utils");
 
 router.post("/analyze", authenticateMember, async (req, res) => {
   const { imageUrl } = req.body;
