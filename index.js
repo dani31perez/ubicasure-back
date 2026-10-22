@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const http = require("node:http");
 
 const stationsRoutes = require("./routes/stations");
 const userRoutes = require("./routes/users");
@@ -25,6 +26,10 @@ app.use("/news", newsRoutes)
 
 const port = process.env.PORT || 8080;
 
-app.listen(port, () => {
+const server = http.createServer(app);
+alertRoutes.attachWebSocketServer(server);
+
+server.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
 });
+

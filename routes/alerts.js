@@ -9,6 +9,48 @@ const {authenticateMember} = require("../middleware/jwt");
 const { sendSmsNotifications } = require("../config/textBee.js");
 const { sendTelegramNotification } = require("../config/telegram.js");
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
+const { createAlertStream } = require("../utils/alertStream.js");
+
+function parseArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+// Public dashboard data deliberately excludes the reporter's email.
+async function loadDashboardAlerts() {
+  const pool = await poolPromise;
+  const [rows] = await pool.execute(`
+    SELECT alertId, latitude, longitude, reliability, images, analysis,
+           fechaCreacion, attendingStations
+    FROM Alerts
+    WHERE active = 1
+      AND fechaCreacion >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)
+    ORDER BY alertId;
+  `);
+  return rows.map(row => ({
+    alertId: String(row.alertId),
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    reliability: row.reliability == null ? null : Number(row.reliability),
+    images: parseArray(row.images),
+    analysis: parseArray(row.analysis),
+    attendingStations: parseArray(row.attendingStations),
+    fechaCreacion: row.fechaCreacion instanceof Date ? row.fechaCreacion.toISOString() : row.fechaCreacion,
+  }));
+}
+
+const alertStream = createAlertStream({ loadActiveAlerts: loadDashboardAlerts });
+router.attachWebSocketServer = server => alertStream.attach(server);
+
+router.get("/stream", (req, res) => {
+  res.set("Upgrade", "websocket").status(426).json({
+    error: "Este endpoint requiere una conexión WebSocket.",
+  });
+});
 
 function toRad(value) {
   return (value * Math.PI) / 180;
@@ -167,7 +209,8 @@ async function deactivateOldAlerts() {
         AND fechaCreacion < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR);
     `;
     const pool = await poolPromise;
-    await pool.execute(query);
+    const [result] = await pool.execute(query);
+    if (result.affectedRows > 0) await alertStream.refresh();
   } catch (error) {
     console.error("Error al desactivar alertas en MySQL:", error);
     throw new Error(
@@ -179,16 +222,21 @@ async function deactivateOldAlerts() {
 router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
   const { latitude, longitude } = req.body;
   const email = req.user.email;
-  await deactivateOldAlerts();
-  if (!email || !latitude || !longitude) {
+  if (!email || latitude == null || longitude == null ||
+      String(latitude).trim() === "" || String(longitude).trim() === "") {
     return res
       .status(400)
       .json({ error: "Faltan los campos email, latitude o longitude." });
   }
 
   try {
-    const userLat = parseFloat(latitude);
-    const userLon = parseFloat(longitude);
+    const userLat = Number(latitude);
+    const userLon = Number(longitude);
+    if (!Number.isFinite(userLat) || !Number.isFinite(userLon) ||
+        userLat < -90 || userLat > 90 || userLon < -180 || userLon > 180) {
+      return res.status(400).json({ error: "Latitud o longitud inválida." });
+    }
+    await deactivateOldAlerts();
 
     const nearbyAlerts = await getNearbyAlerts(
       userLat,
@@ -228,6 +276,8 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
     ]);
 
     const alertId = result.insertId;
+    // Publish the committed alert before image analysis or external notifications.
+    await alertStream.refresh();
 
     let analysis = [];
     if (imageUrls.length > 0) {
@@ -246,6 +296,7 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
         JSON.stringify(analysis),
         alertId,
       ]);
+      await alertStream.refresh();
     }
 
     const hasIncident = analysis.some(
@@ -286,7 +337,6 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
 router.get("/", async (req, res) => {
   const { lat, lon } = req.query;
   const searchRadiusKm = 5;
-  await deactivateOldAlerts();
   if (!lat || !lon) {
     return res
       .status(400)
@@ -296,6 +346,7 @@ router.get("/", async (req, res) => {
   const userLon = parseFloat(lon);
 
   try {
+    await deactivateOldAlerts();
     const nearbyAlerts = await getNearbyAlerts(userLat, userLon, 5);
     const clustered = clusterAlerts(nearbyAlerts, searchRadiusKm);
 
@@ -323,13 +374,14 @@ router.put("/attend/:alertId", authenticateMember, async (req, res) => {
       return res.status(404).json({ error: "Alerta no encontrada." });
     }
 
-    const current = rows[0].attendingStations || [];
+    const current = parseArray(rows[0].attendingStations);
     if (!current.includes(station)) {
       current.push(station);
       await pool.execute(
         "UPDATE Alerts SET attendingStations = ? WHERE alertId = ?",
         [JSON.stringify(current), alertId]
       );
+      await alertStream.refresh();
     }
 
     res.status(200).json({ message: "Estación agregada.", attendingStations: current });
@@ -358,6 +410,25 @@ router.get("/getbyStation/:station", authenticateMember, async (req, res) => {
     res
       .status(500)
       .json({ error: "Error interno del servidor.", details: error.message });
+  }
+});
+
+// Logical deletion preserves the record and removes its marker on every dashboard.
+router.delete("/:alertId", authenticateMember, async (req, res) => {
+  const { alertId } = req.params;
+  if (!/^\d+$/.test(alertId)) {
+    return res.status(400).json({ error: "El identificador de alerta no es válido." });
+  }
+  try {
+    const pool = await poolPromise;
+    const [rows] = await pool.execute("SELECT alertId FROM Alerts WHERE alertId = ?", [alertId]);
+    if (!rows.length) return res.status(404).json({ error: "Alerta no encontrada." });
+    await pool.execute("UPDATE Alerts SET active = 0 WHERE alertId = ?", [alertId]);
+    await alertStream.refresh();
+    res.status(200).json({ message: "Alerta desactivada exitosamente.", alertId, active: false });
+  } catch (error) {
+    console.error("Error al desactivar alerta en MySQL:", error);
+    res.status(500).json({ error: "Error interno del servidor." });
   }
 });
 
