@@ -14,6 +14,21 @@ const newsRoutes = require("./routes/news");
 
 const app = express();
 app.use(express.json());
+// Public read endpoints used by the browser dashboard. Keep other routes intact.
+app.use((req, res, next) => {
+  if (!/^\/(?:news\/getNews|detection\/predictions)\/?$/.test(req.path) ||
+      !["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  const allowed = (process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+  const origin = req.headers.origin;
+  if (allowed.length) {
+    res.vary("Origin");
+    if (origin && !allowed.includes(origin)) return res.status(403).json({ error: "Origen no permitido." });
+    if (origin) res.set("Access-Control-Allow-Origin", origin);
+  } else res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+});
 app.use("/stations", stationsRoutes);
 app.use("/users", userRoutes);
 app.use("/alerts", alertRoutes);
@@ -54,4 +69,5 @@ function shutdown() {
 }
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
+
 
