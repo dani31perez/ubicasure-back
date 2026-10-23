@@ -20,6 +20,7 @@ const authenticateUser = async (req, res, next) => {
     req.user = {
       uid: decoded.uid,
       email: decoded.email,
+      exp: decoded.exp,
     };
 
     next();

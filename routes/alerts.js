@@ -10,6 +10,10 @@ const { sendSmsNotifications } = require("../config/textBee.js");
 const { sendTelegramNotification } = require("../config/telegram.js");
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 const { createAlertStream } = require("../utils/alertStream.js");
+const { createAlertTrackingRouter } = require("./alertTracking.js");
+
+const trackingRoutes = createAlertTrackingRouter({ poolPromise, authenticateMember, authenticateUser });
+router.use("/tracking", trackingRoutes);
 
 function parseArray(value) {
   if (Array.isArray(value)) return value;
@@ -44,7 +48,14 @@ async function loadDashboardAlerts() {
 }
 
 const alertStream = createAlertStream({ loadActiveAlerts: loadDashboardAlerts });
-router.attachWebSocketServer = server => alertStream.attach(server);
+router.attachWebSocketServer = server => {
+  alertStream.attach(server);
+  trackingRoutes.attachWebSocketServer(server);
+};
+router.closeRealtime = () => {
+  trackingRoutes.closeRealtime();
+  alertStream.close();
+};
 
 router.get("/stream", (req, res) => {
   res.set("Upgrade", "websocket").status(426).json({
@@ -424,6 +435,7 @@ router.delete("/:alertId", authenticateMember, async (req, res) => {
     const [rows] = await pool.execute("SELECT alertId FROM Alerts WHERE alertId = ?", [alertId]);
     if (!rows.length) return res.status(404).json({ error: "Alerta no encontrada." });
     await pool.execute("UPDATE Alerts SET active = 0 WHERE alertId = ?", [alertId]);
+    trackingRoutes.stopAlert(alertId);
     await alertStream.refresh();
     res.status(200).json({ message: "Alerta desactivada exitosamente.", alertId, active: false });
   } catch (error) {

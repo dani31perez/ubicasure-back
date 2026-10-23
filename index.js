@@ -29,7 +29,29 @@ const port = process.env.PORT || 8080;
 const server = http.createServer(app);
 alertRoutes.attachWebSocketServer(server);
 
+// Each service handles only its own path. Reject unknown Upgrade requests.
+server.on("upgrade", (req, socket) => {
+  let pathname;
+  try { pathname = new URL(req.url, "http://localhost").pathname; }
+  catch { socket.destroy(); return; }
+  if (!/^\/alerts\/(stream|tracking\/(publish|watch))\/?$/.test(pathname)) {
+    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+  }
+});
+
 server.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
 });
+
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  alertRoutes.closeRealtime();
+  server.close(() => process.exit(0));
+  // Cloud Run allows a short grace period after SIGTERM.
+  setTimeout(() => process.exit(0), 9000).unref();
+}
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
 

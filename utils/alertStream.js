@@ -102,7 +102,7 @@ function createAlertStream({ loadActiveAlerts, syncIntervalMs = 3000, logger = c
     try { pathname = new URL(req.url, "http://localhost").pathname; }
     catch { socket.destroy(); return; }
     if (pathname !== "/alerts/stream" && pathname !== "/alerts/stream/") {
-      socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      // Other WebSocket services on this HTTP server handle their own paths.
       return;
     }
     const allowedOrigins = (process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
