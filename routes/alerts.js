@@ -10,6 +10,8 @@ const { sendSmsNotifications } = require("../config/textBee.js");
 const { sendTelegramNotification } = require("../config/telegram.js");
 const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
 const { createAlertStream } = require("../utils/alertStream.js");
+const { getFirestore } = require("firebase-admin/firestore");
+const { getIncidentTips } = require("../utils/incidentTips.js");
 const { createAlertTrackingRouter } = require("./alertTracking.js");
 
 const trackingRoutes = createAlertTrackingRouter({ poolPromise, authenticateMember, authenticateUser });
@@ -157,17 +159,15 @@ async function sendAlertNotifications(level, members, alertData) {
   }
 
   if (level === 1) {
-    await sendPushNotifications(members, alertData);
-    return;
+    return sendPushNotifications(members, alertData);
   }
 
   if (level === 2) {
-    await sendTelegramNotification(members, alertData);
-    return;
+    return sendTelegramNotification(members, alertData);
   }
 
   if (level === 3) {
-    await sendSmsNotifications(members, alertData)
+    return sendSmsNotifications(members, alertData);
   }
 }
 
@@ -230,9 +230,9 @@ async function deactivateOldAlerts() {
   }
 }
 
-router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
+router.post("/", upload.array("images"), async (req, res) => {
   const { latitude, longitude } = req.body;
-  const email = req.user.email;
+  const email = "martin@galileo.edu";
   if (!email || latitude == null || longitude == null ||
       String(latitude).trim() === "" || String(longitude).trim() === "") {
     return res
@@ -247,15 +247,6 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
         userLat < -90 || userLat > 90 || userLon < -180 || userLon > 180) {
       return res.status(400).json({ error: "Latitud o longitud inválida." });
     }
-    await deactivateOldAlerts();
-
-    const nearbyAlerts = await getNearbyAlerts(
-      userLat,
-      userLon,
-      5
-    );
-
-    const hasNearbyAlert = nearbyAlerts.length > 0;
     const pool = await poolPromise;
 
     const [userResult] = await pool.execute(
@@ -287,61 +278,101 @@ router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
     ]);
 
     const alertId = result.insertId;
-    // Publish the committed alert before image analysis or external notifications.
     await alertStream.refresh();
-
-    let analysis = [];
-    if (imageUrls.length > 0) {
-      analysis = await Promise.all(
-        imageUrls.map(async (url) => {
-          try {
-            return await detectIncident(url);
-          } catch (error) {
-            console.error("Error al analizar imagen de alerta:", error);
-            return null;
-          }
-        })
-      );
-
-      await pool.execute("UPDATE Alerts SET analysis = ? WHERE alertId = ?", [
-        JSON.stringify(analysis),
-        alertId,
-      ]);
-      await alertStream.refresh();
-    }
-
-    const hasIncident = analysis.some(
-      result => result?.incident_detected === true
-    );
-
-    const level = getAlertLevel(hasNearbyAlert, hasIncident);
-
-
-    if (level > 0) {
-      const nearbyMembers = await getNearbyMembers(
-        `${userLat},${userLon}`
-      );
-
-      await sendAlertNotifications(level, nearbyMembers, {
-        alertId,
-        email,
-        latitude: userLat,
-        longitude: userLon,
-        analysis,
-      });
-    }
 
     res.status(201).json({
       message: "Alerta registrada exitosamente.",
       alertId,
       images: imageUrls,
-      analysis,
+      analysisRequired: imageUrls.length > 0,
     });
   } catch (error) {
     console.error("Error al crear alerta en MySQL:", error);
     res
       .status(500)
       .json({ error: "Error interno del servidor.", details: error.message });
+  }
+});
+
+router.post("/:alertId/analyze",  async (req, res) => {
+  const { alertId } = req.params;
+  const email = "martin@galileo.edu";
+
+  if (!email) return res.status(403).json({ error: "La cuenta debe tener un correo asociado." });
+  if (!/^[1-9]\d*$/.test(alertId)) {
+    return res.status(400).json({ error: "El identificador de alerta no es válido." });
+  }
+  try {
+    const pool = await poolPromise;
+    await deactivateOldAlerts();
+    const [rows] = await pool.execute(
+      "SELECT alertId, email, latitude, longitude, images, analysis, active FROM Alerts WHERE alertId = ? AND email = ?",
+      [alertId, email]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Alerta no encontrada." });
+    const alert = rows[0];
+    if (!alert.active) return res.status(409).json({ error: "La alerta está desactivada." });
+    const images = parseArray(alert.images);
+    if (!images.length || images.some(url => typeof url !== "string" || !url)) {
+      return res.status(400).json({ error: "La alerta no tiene imágenes para analizar." });
+    }
+
+    const errors = [];
+    const analysis = await Promise.all(images.map(async (url, imageIndex) => {
+      try {
+        const result = await detectIncident(url);
+        if (result?.success !== true || typeof result.incident_detected !== "boolean") {
+          throw new Error("Respuesta de análisis inválida.");
+        }
+        return result;
+      } catch {
+        errors.push({ imageIndex, error: "No fue posible analizar esta imagen." });
+        return null;
+      }
+    }));
+
+    await pool.execute("UPDATE Alerts SET analysis = ? WHERE alertId = ?", [
+      JSON.stringify(analysis), alert.alertId,
+    ]);
+    await alertStream.refresh();
+
+    const nearby = await getNearbyAlerts(Number(alert.latitude), Number(alert.longitude), 5);
+    const hasNearbyAlert = nearby.some(other => String(other.alertId) !== String(alert.alertId));
+    const hasIncident = analysis.some(result => result?.incident_detected === true);
+    const level = getAlertLevel(hasNearbyAlert, hasIncident);
+    let notification = { status: "not_required", level };
+    if (level > 0) {
+      try {
+        const members = await getNearbyMembers(`${alert.latitude},${alert.longitude}`);
+        if (members.length) {
+          const attempts = await sendAlertNotifications(level, members, {
+            alertId: alert.alertId, email: alert.email,
+            latitude: Number(alert.latitude), longitude: Number(alert.longitude), analysis,
+          });
+          const failed = Array.isArray(attempts) && attempts.some(attempt => attempt.status === "rejected");
+          notification = { status: failed ? "unconfirmed" : "requested", level };
+        } else {
+          notification = { status: "no_recipients", level };
+        }
+      } catch {
+        notification = { status: "unconfirmed", level };
+      }
+    }
+
+    let tips = [];
+    let tipsStatus = "available";
+    try { tips = await getIncidentTips(getFirestore(), analysis); }
+    catch { tipsStatus = "unavailable"; }
+
+    const allFailed = analysis.every(result => result === null);
+    res.status(allFailed ? 502 : 200).json({
+      alertId: alert.alertId,
+      analysis,
+      errors: errors.sort((a, b) => a.imageIndex - b.imageIndex),
+      tips, tipsStatus, notification,
+    });
+  } catch {
+    res.status(500).json({ error: "No fue posible completar el análisis de la alerta." });
   }
 });
 
