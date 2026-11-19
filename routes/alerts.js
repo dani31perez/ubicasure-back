@@ -230,9 +230,9 @@ async function deactivateOldAlerts() {
   }
 }
 
-router.post("/", upload.array("images"), async (req, res) => {
+router.post("/", authenticateUser, upload.array("images"), async (req, res) => {
   const { latitude, longitude } = req.body;
-  const email = "martin@galileo.edu";
+  const email = req.user.email;
   if (!email || latitude == null || longitude == null ||
       String(latitude).trim() === "" || String(longitude).trim() === "") {
     return res
@@ -294,9 +294,9 @@ router.post("/", upload.array("images"), async (req, res) => {
   }
 });
 
-router.post("/:alertId/analyze",  async (req, res) => {
+router.post("/:alertId/analyze", authenticateUser, async (req, res) => {
   const { alertId } = req.params;
-  const email = "martin@galileo.edu";
+  const email = req.user.email;
 
   if (!email) return res.status(403).json({ error: "La cuenta debe tener un correo asociado." });
   if (!/^[1-9]\d*$/.test(alertId)) {
