@@ -156,7 +156,6 @@ async function consultarFuente(nombreFuente, urlFuente) {
       const enlace = (entrada.link || "").trim();
       const contenido = obtenerContenido(entrada);
       const categorias = detectarCategorias(titulo, contenido);
-      if (categorias.length === 0) continue;
       noticias.push({
         fuente: nombreFuente,
         titulo,
@@ -373,4 +372,6 @@ module.exports = {
   obtenerNoticiasRssNuevas,
   obtenerNoticiasXNuevas,
   idNoticia,
+  categoriasPermitidas: Object.keys(categoriasIncidentes),
 };
+

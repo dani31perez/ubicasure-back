@@ -16,7 +16,7 @@ const app = express();
 app.use(express.json());
 // Public read endpoints used by the browser dashboard. Keep other routes intact.
 app.use((req, res, next) => {
-  if (!/^\/(?:news\/getNews|detection\/predictions)\/?$/.test(req.path) ||
+  if (!/^\/(?:news\/(?:getNews|getXNews|getRSSNews)|detection\/predictions)\/?$/.test(req.path) ||
       !["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
   const allowed = (process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
   const origin = req.headers.origin;
@@ -69,5 +69,6 @@ function shutdown() {
 }
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
+
 
 
