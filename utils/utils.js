@@ -57,7 +57,6 @@ async function detectIncident(imageUrl) {
       "x-api-key": process.env.AI_SERVICE_SECRET,
     },
     body: JSON.stringify({ image_url: imageUrl }),
-    signal: AbortSignal.timeout(60000),
   });
 
   if (!response.ok) {
