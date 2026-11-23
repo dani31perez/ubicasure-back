@@ -143,7 +143,7 @@ router.get("/getNews", async (req, res) => {
   }
 });
 
-// Pagina por ID para incluir documentos anteriores a la incorporación del LLM.
+// Las capturas más recientes se leen primero. El ID desempata fechas iguales.
 // El cursor avanza también cuando una página solo tiene noticias procesadas.
 router.get("/pending", async (req, res) => {
   const limite = Number(req.query.limite ?? 50);
@@ -153,9 +153,18 @@ router.get("/pending", async (req, res) => {
     return res.status(400).json({ error: "Límite o cursor inválido." });
   }
   try {
-    let consulta = getFirestore().collection("newsRaw")
-      .orderBy(FieldPath.documentId()).limit(limite);
-    if (cursor) consulta = consulta.startAfter(cursor);
+    const coleccionRaw = getFirestore().collection("newsRaw");
+    let consulta = coleccionRaw
+      .orderBy("capturadaEn", "desc")
+      .orderBy(FieldPath.documentId(), "desc")
+      .limit(limite);
+    if (cursor) {
+      const documentoCursor = await coleccionRaw.doc(cursor).get();
+      if (!documentoCursor.exists || !documentoCursor.data().capturadaEn) {
+        return res.status(400).json({ error: "El cursor no corresponde a una captura válida." });
+      }
+      consulta = consulta.startAfter(documentoCursor);
+    }
     const pagina = await consulta.get();
     const noticias = pagina.docs
       .filter((documento) => !documento.data().clasificacion?.estado)
@@ -169,6 +178,7 @@ router.get("/pending", async (req, res) => {
           url: datos.url || "",
           origen: datos.origen || "",
           fechaIso: datos.fechaIso || null,
+          capturadaEn: datos.capturadaEn?.toDate().toISOString() ?? null,
         };
       });
     res.json({
