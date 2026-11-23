@@ -1,24 +1,71 @@
 const express = require("express");
 const router = express.Router();
 const { Firestore } = require("@google-cloud/firestore");
+const { poolPromise } = require("../config/dbConfig");
 const db = new Firestore();
 const messageRef = db.collection("messages");
 const chatRef = db.collection("chats");
+
+// Older chats store the station name as the second participant.
+async function filterByStation(docs, stationId) {
+  if (stationId === undefined) return docs;
+  const id = Number(stationId);
+  const legacyNames = [...new Set(docs.filter(doc => doc.data().stationId == null)
+    .map(doc => doc.data().users[1]).filter(name => typeof name === "string"))];
+  let matchingNames = [];
+  if (legacyNames.length) {
+    const pool = await poolPromise;
+    const [rows] = await pool.query(`
+      SELECT name FROM Stations WHERE name IN (?)
+      GROUP BY name HAVING COUNT(*) = 1 AND MIN(stationId) = ?
+    `, [legacyNames, id]);
+    matchingNames = rows.map(row => row.name);
+  }
+  return docs.filter(doc => {
+    const chat = doc.data();
+    return chat.stationId === id || (chat.stationId == null && matchingNames.includes(chat.users[1]));
+  });
+}
+
+router.use((req, res, next) => {
+  const id = req.query.stationId ?? req.body?.stationId;
+  if (id != null && (!(typeof id === "string" || typeof id === "number") ||
+      !/^[1-9]\d*$/.test(String(id)) || Number(id) > 4294967295)) {
+    return res.status(400).json({ error: "stationId inválido." });
+  }
+  next();
+});
 
 /*
   POST /
   Crea un nuevo chat entre dos usuarios.
 */
 router.post("/", async (req, res) => {
-  const { sender, receiver } = req.body;
+  const { sender, senderName, receiver, stationId } = req.body;
+  if (typeof sender !== "string" || !sender.trim()) {
+    return res.status(400).json({ error: "Falta el remitente." });
+  }
 
-  if (!sender || !receiver)
-    return res.status(400).send("All fields (sender, receiver) are required.");
+  const pool = await poolPromise;
+  let stations;
+  if (stationId != null) {
+    [stations] = await pool.execute("SELECT stationId, name FROM Stations WHERE stationId = ?", [stationId]);
+  } else {
+    if (typeof receiver !== "string" || !receiver.trim()) {
+      return res.status(400).json({ error: "Falta stationId." });
+    }
+    [stations] = await pool.execute("SELECT stationId, name FROM Stations WHERE name = ? LIMIT 2", [receiver]);
+    if (stations.length > 1) return res.status(409).json({ error: "Selecciona la estación por stationId." });
+  }
+  if (!stations.length) return res.status(404).json({ error: "Estación sin registrar." });
 
-  const chatData = { users: [sender, receiver] };
-  await chatRef.add(chatData);
-
-  res.status(201).json(chatData);
+  const station = stations[0];
+  const chatData = { users: [sender, station.name], stationId: station.stationId, lastMessage: null };
+  if (typeof senderName === "string" && senderName.trim() && senderName.trim() !== sender) {
+    chatData.userName = senderName.trim();
+  }
+  const chat = await chatRef.add(chatData);
+  res.status(201).json({ id: chat.id, ...chatData });
 });
 
 /*
@@ -29,14 +76,15 @@ router.get("/getByUsername/:username", async (req, res) => {
   const username = req.params.username;
 
   try {
+    const stationId = req.query.stationId;
     const chatQuery = chatRef.where("users", "array-contains", username);
     const chatDoc = await chatQuery.get();
-
-    if (chatDoc.empty) {
+    const docs = await filterByStation(chatDoc.docs, stationId);
+    if (!docs.length) {
       return res.status(404).send("Chat not found");
     }
 
-    const chats = chatDoc.docs.map((doc) => ({
+    const chats = docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
@@ -91,9 +139,8 @@ router.get("/getByBothUsers/:user1/:user2", async (req, res) => {
     const q = chatRef.where("users", "array-contains", user1);
     const querySnapshot = await q.get();
 
-    const chat = querySnapshot.docs.find((doc) =>
-      doc.data().users.includes(user2)
-    );
+    const candidates = querySnapshot.docs.filter(doc => doc.data().users.includes(user2));
+    const [chat] = await filterByStation(candidates, req.query.stationId);
 
     if (!chat) {
       return res.status(404).send("Chat not found");

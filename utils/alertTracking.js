@@ -103,7 +103,7 @@ function createAlertTracking({
     return {
       trackingId: session.id,
       alertId: session.alertId,
-      station: session.station,
+      station: session.station, stationId: session.stationId,
       memberName: session.memberName,
       status: session.location ? "sharing" : "waiting_location",
       location: session.location,
@@ -148,10 +148,10 @@ function createAlertTracking({
 
   async function authorizePublisher(alertId, identity) {
     const [alert, member] = await Promise.all([getAlert(alertId), loadMember(identity.email)]);
-    if (!member || !member.station || member.station !== identity.station) {
+    if (!member || !member.stationId || member.stationId !== identity.stationId) {
       fail(403, "member_not_authorized", "El miembro ya no pertenece a la estación de su token.");
     }
-    if (!parseStations(alert.attendingStations).includes(member.station)) {
+    if (!parseStations(alert.attendingStationIds).includes(member.stationId)) {
       fail(403, "station_not_attending", "Tu estación debe atender esta alerta antes de compartir ubicación.");
     }
     return { alert, member };
@@ -198,7 +198,7 @@ function createAlertTracking({
           const alert = byId.get(session.alertId);
           if (!activeAlert(alert)) endSession(session, "alert_inactive");
           else if (!sameEmail(alert.email, session.userEmail) ||
-              !parseStations(alert.attendingStations).includes(session.station)) {
+              !parseStations(alert.attendingStationIds).includes(session.stationId)) {
             endSession(session, "authorization_changed");
           }
         }
@@ -298,7 +298,7 @@ function createAlertTracking({
       session = {
         id: randomUUID(), key, alertId: String(alert.alertId), userEmail: alert.email,
         memberEmail: identity.email, memberName: member.fullName || "Miembro de estación",
-        station: member.station, publisher: socket, viewers: new Set(),
+        station: member.station, stationId: member.stationId, publisher: socket, viewers: new Set(),
         startedAt: now(), lastUpdateMs: now(), sequence: -1, capturedMs: -Infinity, location: null,
       };
       sessions.set(session.id, session);
@@ -372,7 +372,7 @@ function createAlertTracking({
         if (!session) fail(404, "tracking_not_found", "No hay una transmisión activa con ese identificador.");
         const alert = await getAlert(session.alertId);
         if (!sameEmail(alert.email, identity.email)) fail(403, "not_alert_owner", "Solo puedes ver el seguimiento de tus alertas.");
-        if (!parseStations(alert.attendingStations).includes(session.station) || !sameEmail(alert.email, session.userEmail)) {
+        if (!parseStations(alert.attendingStationIds).includes(session.stationId) || !sameEmail(alert.email, session.userEmail)) {
           endSession(session, "authorization_changed");
           fail(409, "tracking_unavailable", "El seguimiento ya no está disponible.");
         }

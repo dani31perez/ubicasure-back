@@ -22,8 +22,8 @@ router.put("/fcmToken", authenticateMember, async (req, res) => {
     const pool = await poolPromise;
 
     await pool.execute(
-      "UPDATE Members SET fcmToken = ? WHERE email = ?",
-      [fcmToken, member.email]
+      "UPDATE Members SET fcmToken = ? WHERE email = ? AND stationId = ?",
+      [fcmToken, member.email, member.stationId]
     );
 
     return res.status(200).json({
@@ -46,9 +46,9 @@ router.put(
       return res.status(400).json({ msg: "El email es requerido" });
     }
 
-    const findQuery = "SELECT * FROM Members WHERE email = ?";
+    const findQuery = "SELECT position FROM Members WHERE email = ? AND stationId = ?";
     const pool = await poolPromise;
-    const [findResult] = await pool.execute(findQuery, [email]);
+    const [findResult] = await pool.execute(findQuery, [email, req.member.stationId]);
 
     if (findResult.length === 0) {
       return res.status(404).json({ msg: "Miembro no encontrado." });
@@ -62,10 +62,10 @@ router.put(
     const updateQuery = `
       UPDATE Members
       SET position = ?
-      WHERE email = ?;
+      WHERE email = ? AND stationId = ?;
     `;
 
-    await pool.execute(updateQuery, [newPosition, email]);
+    await pool.execute(updateQuery, [newPosition, email, req.member.stationId]);
 
     res.status(200).json({
       msg: `Posicion actualizada a: ${newPosition}`,
@@ -75,22 +75,18 @@ router.put(
   }
 });
 
-router.get("/getByStation/:station", authenticateMember, async (req, res) => {
+router.get("/getByStation/:stationId", authenticateMember, async (req, res) => {
   try {
-    const { station } = req.params;
+    const { stationId } = req.member;
     const pool = await poolPromise;
 
-    if (!station) {
-      return res.status(400).json({ msg: "La estacion es requerida" });
-    }
-
     const findQuery = `
-      SELECT email, fullName, phone, position, station
+      SELECT email, fullName, phone, position, stationId
       FROM Members
-      WHERE station = ?
+      WHERE stationId = ?
     `;
 
-    const [members] = await pool.execute(findQuery, [station]);
+    const [members] = await pool.execute(findQuery, [stationId]);
 
     if (members.length === 0) {
       return res
@@ -98,7 +94,7 @@ router.get("/getByStation/:station", authenticateMember, async (req, res) => {
         .json({ msg: "No se encontraron miembros para esa estacion." });
     }
 
-    res.status(200).send(members);
+    res.status(200).send(members.map(member => ({ ...member, station: req.member.station })));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -129,11 +125,15 @@ const generateUniqueCode = async (pool) => {
 
 router.post("/", authenticateMember, async (req, res) => {
   try {
-    const { email, fullName, phone, position, station } = req.body;
+    const { email, fullName, phone, position } = req.body;
 
-    if (!email || !fullName || !phone || !position || !station) {
+    if (position === "Jefe de Estacion" && req.member.position !== "Jefe de Estacion") {
+      return res.status(403).json({ msg: "Solo un jefe puede registrar a otro jefe de estación." });
+    }
+
+    if (!email || !fullName || !phone || !position) {
       return res.status(400).json({
-        msg: "Email, nombre completo, teléfono, posición y estacion son requeridos.",
+        msg: "Email, nombre completo, teléfono, y posición son requeridos.",
       });
     }
 
@@ -151,7 +151,7 @@ router.post("/", authenticateMember, async (req, res) => {
     const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
 
     const query = `
-      INSERT INTO Members (email, fullName, phone, position, station, code)
+      INSERT INTO Members (email, fullName, phone, position, stationId, code)
       VALUES (?, ?, ?, ?, ?, ?);
     `;
 
@@ -160,7 +160,7 @@ router.post("/", authenticateMember, async (req, res) => {
       fullName,
       phone,
       position,
-      station,
+      req.member.stationId,
       codeHash,
     ]);
 
@@ -169,6 +169,7 @@ router.post("/", authenticateMember, async (req, res) => {
       code,
     });
   } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") return res.status(409).json({ msg: "El correo ya está registrado." });
     res.status(500).json({ error: error.message });
   }
 });
@@ -184,7 +185,8 @@ router.post("/login", async (req, res) => {
     }
 
     const pool = await poolPromise;
-    const [result] = await pool.execute("SELECT * FROM Members");
+    const [result] = await pool.execute(`SELECT m.email, m.fullName, m.phone, m.position, m.code, m.stationId, s.name AS station
+       FROM Members m JOIN Stations s ON s.stationId = m.stationId`);
 
     let matched = null;
     for (const member of result) {
@@ -225,8 +227,8 @@ router.put(
 
     const pool = await poolPromise;
     const [findResult] = await pool.execute(
-      "SELECT * FROM Members WHERE email = ?",
-      [email]
+      "SELECT position FROM Members WHERE email = ? AND stationId = ?",
+      [email, req.member.stationId]
     );
 
     if (findResult.length === 0) {
@@ -236,9 +238,10 @@ router.put(
     const code = await generateUniqueCode(pool);
     const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
 
-    await pool.execute("UPDATE Members SET code = ? WHERE email = ?", [
+    await pool.execute("UPDATE Members SET code = ? WHERE email = ? AND stationId = ?", [
       codeHash,
       email,
+      req.member.stationId,
     ]);
 
     res.status(200).json({
@@ -279,16 +282,16 @@ router.put("/update/:email", authenticateMember, async (req, res) => {
 
     const pool = await poolPromise;
     const [existing] = await pool.execute(
-      "SELECT * FROM Members WHERE email = ?",
-      [email]
+      "SELECT position FROM Members WHERE email = ? AND stationId = ?",
+      [email, req.member.stationId]
     );
 
     if (existing.length === 0) {
       return res.status(404).json({ msg: "Miembro no encontrado." });
     }
 
-    const query = `UPDATE Members SET ${fields.join(", ")} WHERE email = ?`;
-    values.push(email);
+    const query = `UPDATE Members SET ${fields.join(", ")} WHERE email = ? AND stationId = ?`;
+    values.push(email, req.member.stationId);
 
     await pool.execute(query, values);
 
@@ -300,11 +303,11 @@ router.put("/update/:email", authenticateMember, async (req, res) => {
 
 router.post("/link", authenticateMember, async (req, res) => {
   try {
-    const { email, station } = req.member;
+    const { email, stationId } = req.member;
 
     const telegramLink = await createTelegramLink(
       email,
-      station
+      stationId
     );
 
     return res.status(200).json({ success: true, telegramLink,});

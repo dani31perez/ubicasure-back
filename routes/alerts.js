@@ -4,11 +4,16 @@ const { poolPromise } = require("../config/dbConfig.js");
 const authenticateUser = require("../middleware/authenticateUser");
 const multer = require("multer");
 const upload = multer({ storage: multer.memoryStorage() });
-const { addFiles, detectIncident, fetchNearbyPlaces, sendPushNotifications, getMembersByStation } = require("../utils/utils.js");
+const { addFiles, detectIncident, sendPushNotifications } = require("../utils/utils.js");
+const { fetchNearbyPlaces } = require("../utils/places");
 const {authenticateMember} = require("../middleware/jwt");
 const { sendSmsNotifications } = require("../config/textBee.js");
 const { sendTelegramNotification } = require("../config/telegram.js");
-const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY;
+const attendingNames = `(
+  SELECT JSON_ARRAYAGG(s.name) FROM AlertAttendingStations ats
+  JOIN Stations s ON s.stationId = ats.stationId
+  WHERE ats.alertId = a.alertId
+)`;
 const { createAlertStream } = require("../utils/alertStream.js");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getIncidentTips } = require("../utils/incidentTips.js");
@@ -31,8 +36,8 @@ async function loadDashboardAlerts() {
   const pool = await poolPromise;
   const [rows] = await pool.execute(`
     SELECT alertId, latitude, longitude, reliability, images, analysis,
-           fechaCreacion, attendingStations
-    FROM Alerts
+           fechaCreacion, ${attendingNames} AS attendingStations
+    FROM Alerts a
     WHERE active = 1
       AND fechaCreacion >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)
     ORDER BY alertId;
@@ -69,38 +74,37 @@ function toRad(value) {
   return (value * Math.PI) / 180;
 }
 
-async function getNearbyMembers(location) {
-  const [nearbyFireStations, nearbyPoliceStations] = await Promise.all([
-    fetchNearbyPlaces(
-      "fire_station",
-      location,
-      1000,
-      googleMapsApiKey
-    ),
-    fetchNearbyPlaces(
-      "police",
-      location,
-      1000,
-      googleMapsApiKey
-    ),
-  ]);
-
-
-  const stations = [
-    ...nearbyFireStations.map(station => station.name),
-    ...nearbyPoliceStations.map(station => station.name),
-  ];
-
-  const members = (
-    await Promise.all(
-      stations.map(station => getMembersByStation(station))
-    )
-  ).flat();
-
+async function getNearbyStationMembers(latitude, longitude) {
+  const location = `${latitude},${longitude}`;
+  const radiusMeters = 1000;
+  const results = await Promise.all(["police", "fire_station"].map(type =>
+    fetchNearbyPlaces(type, location, radiusMeters, process.env.GOOGLE_MAPS_API_KEY)
+  ));
+  const placeIds = new Set();
+  for (const place of results.flat()) {
+    const point = place.geometry?.location;
+    if (place.place_id && Number.isFinite(point?.lat) && Number.isFinite(point.lng) &&
+        haversineDistanceMeters(latitude, longitude, point.lat, point.lng) <= radiusMeters) {
+      placeIds.add(place.place_id);
+    }
+  }
+  if (!placeIds.size) return [];
+  const pool = await poolPromise;
+  const [members] = await pool.execute(`
+    SELECT m.email, m.phone, m.fcmToken, m.telegramChatId
+    FROM Stations s JOIN Members m ON m.stationId = s.stationId
+    WHERE s.googlePlaceId IN (${Array.from(placeIds, () => "?").join(", ")})
+  `, [...placeIds]);
   return members;
 }
 
-async function getNearbyAlerts(latitude, longitude, radiusKm) {
+async function getNearbyAlerts(latitude, longitude, radiusKm, stationId) {
+  const coverageColumn = stationId === undefined ? "" : `
+      EXISTS (
+        SELECT 1 FROM Stations s WHERE s.stationId = ?
+        AND ST_Intersects(s.coverage,
+          ST_PointFromText(CONCAT('POINT(', a.longitude, ' ', a.latitude, ')'), 4326, 'axis-order=long-lat'))
+      ) AS withinCoverage,`;
   const query = `
     SELECT
       alertId,
@@ -110,11 +114,12 @@ async function getNearbyAlerts(latitude, longitude, radiusKm) {
       email,
       images,
       analysis,
+      ${coverageColumn}
       ST_Distance_Sphere(
         POINT(longitude, latitude),
         POINT(?, ?)
       ) / 1000 AS distanceInKm
-    FROM Alerts
+    FROM Alerts a
     WHERE active = 1
     HAVING distanceInKm <= ?
     ORDER BY distanceInKm;
@@ -123,6 +128,7 @@ async function getNearbyAlerts(latitude, longitude, radiusKm) {
   const pool = await poolPromise;
 
   const [rows] = await pool.execute(query, [
+    ...(stationId === undefined ? [] : [stationId]),
     longitude,
     latitude,
     radiusKm,
@@ -130,6 +136,7 @@ async function getNearbyAlerts(latitude, longitude, radiusKm) {
 
   return rows.map((row) => ({
     ...row,
+    ...(stationId === undefined ? {} : { withinCoverage: Number(row.withinCoverage) === 1 }),
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     reliability: Number(row.reliability),
@@ -343,7 +350,7 @@ router.post("/:alertId/analyze", authenticateUser, async (req, res) => {
     let notification = { status: "not_required", level };
     if (level > 0) {
       try {
-        const members = await getNearbyMembers(`${alert.latitude},${alert.longitude}`);
+        const members = await getNearbyStationMembers(alert.latitude, alert.longitude);
         if (members.length) {
           const attempts = await sendAlertNotifications(level, members, {
             alertId: alert.alertId, email: alert.email,
@@ -376,7 +383,10 @@ router.post("/:alertId/analyze", authenticateUser, async (req, res) => {
   }
 });
 
-router.get("/", async (req, res) => {
+router.get("/", (req, res, next) => {
+  if (req.query.stationId === undefined) return next();
+  return authenticateMember(req, res, next);
+}, async (req, res) => {
   const { lat, lon } = req.query;
   const searchRadiusKm = 5;
   if (!lat || !lon) {
@@ -389,8 +399,8 @@ router.get("/", async (req, res) => {
 
   try {
     await deactivateOldAlerts();
-    const nearbyAlerts = await getNearbyAlerts(userLat, userLon, 5);
-    const clustered = clusterAlerts(nearbyAlerts, searchRadiusKm);
+    const nearbyAlerts = await getNearbyAlerts(userLat, userLon, searchRadiusKm, req.member?.stationId);
+    const clustered = clusterAlerts(nearbyAlerts, 5); // Agrupar marcadores a 5 metros.
 
     res.status(200).json(clustered);
   } catch (error) {
@@ -403,48 +413,39 @@ router.get("/", async (req, res) => {
 
 router.put("/attend/:alertId", authenticateMember, async (req, res) => {
   const { alertId } = req.params;
-  const station = req.member.station;
+  const { stationId } = req.member;
 
   try {
     const pool = await poolPromise;
-    const [rows] = await pool.execute(
-      "SELECT attendingStations FROM Alerts WHERE alertId = ?",
-      [alertId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ error: "Alerta no encontrada." });
-    }
-
-    const current = parseArray(rows[0].attendingStations);
-    if (!current.includes(station)) {
-      current.push(station);
-      await pool.execute(
-        "UPDATE Alerts SET attendingStations = ? WHERE alertId = ?",
-        [JSON.stringify(current), alertId]
-      );
-      await alertStream.refresh();
-    }
-
-    res.status(200).json({ message: "Estación agregada.", attendingStations: current });
+    await pool.execute(`
+      INSERT INTO AlertAttendingStations (alertId, stationId)
+      SELECT a.alertId, ? FROM Alerts a WHERE a.alertId = ?
+      ON DUPLICATE KEY UPDATE startedAt = AlertAttendingStations.startedAt
+    `, [stationId, alertId]);
+    const [rows] = await pool.execute(`
+      SELECT ${attendingNames} AS attendingStations FROM Alerts a WHERE a.alertId = ?
+    `, [alertId]);
+    if (!rows.length) return res.status(404).json({ error: "Alerta no encontrada." });
+    await alertStream.refresh();
+    res.status(200).json({ message: "Estación agregada.", attendingStations: parseArray(rows[0].attendingStations) });
   } catch (error) {
     res.status(500).json({ error: error.message, details: error.message });
   }
 });
 
-router.get("/getbyStation/:station", authenticateMember, async (req, res) => {
-  const { station } = req.params;
+router.get("/getbyStation/:stationId", authenticateMember, async (req, res) => {
+  const { stationId } = req.member;
 
   try {
     const pool = await poolPromise;
     const query = `
-      SELECT alertId, latitude, longitude, reliability, email, attendingStations, images, fechaCreacion
-      FROM Alerts
-      WHERE active = 1
-        AND JSON_CONTAINS(attendingStations, JSON_QUOTE(?))
-      ORDER BY fechaCreacion DESC;
+      SELECT a.alertId, a.latitude, a.longitude, a.reliability, a.email,
+             ${attendingNames} AS attendingStations, a.images, a.fechaCreacion
+      FROM AlertAttendingStations ats JOIN Alerts a ON a.alertId = ats.alertId
+      WHERE a.active = 1 AND ats.stationId = ?
+      ORDER BY a.fechaCreacion DESC;
     `;
-    const [rows] = await pool.execute(query, [station]);
+    const [rows] = await pool.execute(query, [stationId]);
 
     res.status(200).json(rows);
   } catch (error) {

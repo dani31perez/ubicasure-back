@@ -6,7 +6,7 @@ const telegramConfig = JSON.parse(process.env.TELEGRAM_CONFIG);
 
 const telegramBotUsername = "UbicasureAlertsBot";
 
-async function createTelegramLink(email, station) {
+async function createTelegramLink(email, stationId) {
   const pool = await poolPromise;
 
   const [members] = await pool.execute(
@@ -14,10 +14,10 @@ async function createTelegramLink(email, station) {
       SELECT telegramChatId
       FROM Members
       WHERE email = ?
-        AND station = ?
+        AND stationId = ?
       LIMIT 1
     `,
-    [email, station]
+    [email, stationId]
   );
 
   if (members.length === 0) {
@@ -37,9 +37,9 @@ async function createTelegramLink(email, station) {
       SET telegramLinkToken = ?,
           telegramLinkExpiresAt = ?
       WHERE email = ?
-        AND station = ?
+        AND stationId = ?
     `,
-    [token, expiresAt, email, station]
+    [token, expiresAt, email, stationId]
   );
 
   if (result.affectedRows === 0) {
@@ -73,7 +73,7 @@ async function processTelegramUpdate(update) {
 
   const [members] = await pool.execute(
   `
-    SELECT email, station
+    SELECT email, stationId
     FROM Members
     WHERE telegramLinkToken = ?
       AND telegramLinkExpiresAt > NOW()
@@ -93,7 +93,7 @@ async function processTelegramUpdate(update) {
     return;
     }
 
-  const { email, station } = members[0];
+  const { email, stationId } = members[0];
 
   await pool.execute(
   `
@@ -102,9 +102,9 @@ async function processTelegramUpdate(update) {
         telegramLinkToken = NULL,
         telegramLinkExpiresAt = NULL
     WHERE email = ?
-      AND station = ?
+      AND stationId = ?
   `,
-  [chatId, email, station]
+  [chatId, email, stationId]
 );
 
   console.log(

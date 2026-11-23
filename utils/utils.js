@@ -4,7 +4,6 @@ const bucketName = "ubicasure-chat-media";
 const { getMessaging } = require("firebase-admin/messaging");
 const bucket = storage.bucket(bucketName);
 const { fetchNearbyPlaces, fetchPlaceDetails } = require("./places");
-const { poolPromise } = require("../config/dbConfig");
 
 /*
   Elimina un archivo de firebase storage, usando la ruta completa y la carpeta donde se encuentra.
@@ -70,15 +69,6 @@ async function detectIncident(imageUrl) {
   return response.json();
 }
 
-const getMembersByStation = async (station) => {
-  const findQuery = "SELECT * FROM Members WHERE station = ?";
-  const pool = await poolPromise;
-
-  const [members] = await pool.execute(findQuery, [station]);
-
-  return members.map(({ code, ...rest }) => rest);
-};
-
 async function sendPushNotifications(members, alertData) {
   const tokens = members
     .map(member => member.fcmToken)
@@ -114,4 +104,4 @@ async function sendPushNotifications(members, alertData) {
   }
 }
 
-module.exports = { deleteFile, addFiles, detectIncident, fetchNearbyPlaces, fetchPlaceDetails, sendPushNotifications, getMembersByStation };
+module.exports = { deleteFile, addFiles, detectIncident, fetchNearbyPlaces, fetchPlaceDetails, sendPushNotifications };

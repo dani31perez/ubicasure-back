@@ -7,22 +7,22 @@ router.post("/",  authenticateMember, async (req, res) => {
   const { userEmail, content } = req.body;
 
   const memberEmail = req.member.email;
-  const stationName = req.member.station;
+  const { stationId } = req.member;
 
   if (!userEmail || !content) {
     return res.status(400).json({
       error:
-        "Faltan los campos nombre de la estacion, email del miembro, email del usuario  o contenido.",
+        "Faltan los campos correo del usuario o contenido.",
     });
   }
 
   try {
     const query = `
-      INSERT INTO Reports (stationName, memberEmail, userEmail, content)
+      INSERT INTO Reports (stationId, memberEmail, userEmail, content)
       VALUES (?, ?, ?, ?);
     `;
     const pool = await poolPromise;
-    const [result] = await pool.execute(query, [stationName, memberEmail, userEmail, content]);
+    const [result] = await pool.execute(query, [stationId, memberEmail, userEmail, content]);
 
     res.status(201).json({
       message: "Reporte creado exitosamente.",
@@ -38,26 +38,20 @@ router.post("/",  authenticateMember, async (req, res) => {
 });
 
 router.get("/getByStation", authenticateMember, async (req, res) => {
-  const { stationName } = req.query;
-
-  if (!stationName) {
-    return res
-      .status(400)
-      .json({ error: "Falta el parametro de consulta nombre de la estacion" });
-  }
+  const { stationId } = req.member;
 
   try {
     const query = `
       SELECT *
       FROM Reports
-      WHERE stationName = ?
+      WHERE stationId = ?
       ORDER BY createdAt DESC;
     `;
 
     const pool = await poolPromise;
-    const [result] = await pool.execute(query, [stationName]);
+    const [result] = await pool.execute(query, [stationId]);
 
-    res.status(200).json(result);
+    res.status(200).json(result.map(report => ({ ...report, stationName: req.member.station })));
   } catch (error) {
     console.error("Error al buscar reportes por estación:", error);
     res

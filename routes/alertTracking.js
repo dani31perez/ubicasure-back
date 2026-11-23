@@ -20,9 +20,11 @@ function createAlertTrackingRouter({ poolPromise, authenticateMember, authentica
       const pool = await poolPromise;
       // Read only. Use the existing one-hour lifetime and attendance fields.
       const [rows] = await pool.execute(`
-        SELECT alertId, email, attendingStations,
+        SELECT a.alertId, a.email,
+          (SELECT JSON_ARRAYAGG(ats.stationId) FROM AlertAttendingStations ats
+           WHERE ats.alertId = a.alertId) AS attendingStationIds,
           (active = 1 AND fechaCreacion >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)) AS trackingEligible
-        FROM Alerts
+        FROM Alerts a
         WHERE alertId IN (${alertIds.map(() => "?").join(",")})
       `, alertIds);
       return rows;
@@ -30,7 +32,8 @@ function createAlertTrackingRouter({ poolPromise, authenticateMember, authentica
     async loadMember(email) {
       const pool = await poolPromise;
       const [rows] = await pool.execute(
-        "SELECT email, fullName, station FROM Members WHERE email = ?", [email]
+        `SELECT m.email, m.fullName, m.stationId, s.name AS station
+         FROM Members m JOIN Stations s ON s.stationId = m.stationId WHERE m.email = ?`, [email]
       );
       return rows[0] ?? null;
     },

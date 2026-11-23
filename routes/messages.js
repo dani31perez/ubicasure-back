@@ -12,7 +12,8 @@ const { addFiles } = require("../utils/utils.js");
   Agrega un nuevo mensaje a un chat específico.
 */
 router.post("/", upload.single("data"), async (req, res) => {
-  const { chatId, sender, type, position, senderName } = req.body;
+  const { chatId, sender, type, position } = req.body;
+  const senderName = typeof req.body.senderName === "string" ? req.body.senderName.trim() : "";
 
   // Validar campos obligatorios
   if (!sender || !chatId || !type || !position || !senderName)
@@ -22,7 +23,8 @@ router.post("/", upload.single("data"), async (req, res) => {
 
   try {
     // Verificar que el chat exista
-    const chatDoc = await db.collection("chats").doc(chatId).get();
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatDoc = await chatRef.get();
     if (!chatDoc.exists) {
       return res.status(404).send("Chat not found.");
     }
@@ -47,12 +49,6 @@ router.post("/", upload.single("data"), async (req, res) => {
       messageContent = req.body.data;
     }
 
-    // Calcular el ID personalizado basado en la cantidad de mensajes
-    const messagesQuery = messageRef.where("chatId", "==", chatId);
-    const querySnapshot = await messagesQuery.get();
-    const count = querySnapshot.size;
-    const customId = `${chatId}_${count}`;
-
     // Obtener la fecha y hora actual en formato local
     const timestamp = new Date().toLocaleString("es-GT", {
       timeZone: "America/Guatemala",
@@ -76,9 +72,37 @@ router.post("/", upload.single("data"), async (req, res) => {
       senderName
     };
 
-    // Guardar el mensaje con ID personalizado
-    await messageRef.doc(customId).set(messageData);
-    res.status(201).json({ id: customId, ...messageData });
+    const saved = await db.runTransaction(async transaction => {
+      const current = await transaction.get(chatRef);
+      if (!current.exists) return null;
+      const chat = current.data();
+      let sequence = 0;
+      if (Number.isSafeInteger(chat.lastMessage?.sequence)) {
+        sequence = chat.lastMessage.sequence + 1;
+      } else if (chat.lastMessage !== null) {
+        // Los chats antiguos ya tienen mensajes con IDs de la forma chatId_n.
+        const history = await transaction.get(messageRef.where("chatId", "==", chatId).select());
+        for (const doc of history.docs) {
+          const suffix = doc.id.slice(chatId.length + 1);
+          if (doc.id.startsWith(chatId + "_") && /^\d+$/.test(suffix)) {
+            sequence = Math.max(sequence, Number(suffix) + 1);
+          }
+        }
+      }
+      const ref = messageRef.doc(`${chatId}_${sequence}`);
+      const fromUser = sender === chat.users?.[0];
+      const name = fromUser && senderName === sender && chat.userName ? chat.userName : senderName;
+      const lastMessage = { id: ref.id, sequence, sender, senderName: name, type, timestamp,
+        data: type === "Imagen" ? "Imagen" : messageContent };
+      const updates = { lastMessage };
+      if (fromUser && name !== sender) updates.userName = name;
+      const message = { ...messageData, senderName: name };
+      transaction.create(ref, message);
+      transaction.update(chatRef, updates);
+      return { id: ref.id, ...message };
+    });
+    if (!saved) return res.status(404).send("Chat not found.");
+    res.status(201).json(saved);
   } catch (err) {
     console.error("Error adding message:", err);
     res.status(500).send("Error adding message");
