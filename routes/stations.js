@@ -18,6 +18,67 @@ function isClosedRing(ring) {
   return ring[0][0] === last[0] && ring[0][1] === last[1];
 }
 
+function isCoveragePolygon(coverage) {
+  return coverage?.type === "Polygon" && Array.isArray(coverage.coordinates) &&
+    coverage.coordinates.length > 0 && coverage.coordinates.every(ring =>
+      isClosedRing(ring) && new Set(ring.slice(0, -1).map(point => JSON.stringify(point))).size >= 3
+    ) && coverage.coordinates.reduce((total, ring) => total + ring.length - 1, 0) <= 500;
+}
+
+function coverageError(error, res) {
+  if (["ER_GIS_INVALID_DATA", "ER_INVALID_GEOJSON_UNSPECIFIED", "ER_INVALID_GEOJSON_WRONG_DIMENSION",
+    "ER_GEOMETRY_PARAM_LONGITUDE_OUT_OF_RANGE", "ER_GEOMETRY_PARAM_LATITUDE_OUT_OF_RANGE"].includes(error.code)) {
+    return res.status(400).json({ error: "El polígono de cobertura es inválido." });
+  }
+  return res.status(500).json({ error: "No fue posible actualizar la cobertura de la estación." });
+}
+
+// authenticateMember comprueba que el ID de la ruta coincida con la estación del token.
+router.get("/:stationId/coverage", authenticateMember, async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const [rows] = await pool.execute(`
+      SELECT stationId, name, googlePlaceId AS placeId, ST_AsGeoJSON(coverage) AS coverage
+      FROM Stations WHERE stationId = ?
+    `, [req.member.stationId]);
+    if (!rows.length) return res.status(404).json({ error: "Estación no encontrada." });
+    const row = rows[0];
+    const coverage = typeof row.coverage === "string" ? JSON.parse(row.coverage) : row.coverage;
+    return res.json({ stationId: row.stationId, name: row.name, placeId: row.placeId, coverage: coverage ?? null });
+  } catch {
+    return res.status(500).json({ error: "No fue posible consultar la cobertura de la estación." });
+  }
+});
+
+router.put("/:stationId/coverage", authenticateMember, requireRole("Jefe de Estacion"), async (req, res) => {
+  const { coverage } = req.body || {};
+  if (!isCoveragePolygon(coverage)) {
+    return res.status(400).json({ error: "Envía coverage como un Polygon GeoJSON con al menos tres puntos distintos, anillos cerrados y un máximo de 500 vértices, en orden [longitud, latitud]." });
+  }
+  try {
+    const pool = await poolPromise;
+    const polygon = JSON.stringify({ type: "Polygon", coordinates: coverage.coordinates });
+    const [validity] = await pool.execute(
+      "SELECT ST_IsValid(ST_GeomFromGeoJSON(?, 1, 4326)) AS valid", [polygon]
+    );
+    if (!Number(validity[0]?.valid)) {
+      return res.status(400).json({ error: "El polígono de cobertura es inválido. Revisa que sus bordes no se crucen." });
+    }
+    const [result] = await pool.execute(
+      "UPDATE Stations SET coverage = ST_GeomFromGeoJSON(?, 1, 4326) WHERE stationId = ?",
+      [polygon, req.member.stationId]
+    );
+    // Un UPDATE sin cambios puede devolver affectedRows = 0. Guardarlo otra vez también es válido.
+    if (!result.affectedRows) {
+      const [existing] = await pool.execute("SELECT stationId FROM Stations WHERE stationId = ?", [req.member.stationId]);
+      if (!existing.length) return res.status(404).json({ error: "Estación no encontrada." });
+    }
+    return res.json({ stationId: req.member.stationId, coverage: JSON.parse(polygon), message: "Cobertura actualizada." });
+  } catch (error) {
+    return coverageError(error, res);
+  }
+});
+
 router.post("/", authenticateMember, requireRole("Jefe de Estacion"), async (req, res) => {
   const { name, placeId, coverage } = req.body || {};
   if (typeof name !== "string" || !name.trim() || [...name.trim()].length > 100 ||
