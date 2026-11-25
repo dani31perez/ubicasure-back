@@ -3,6 +3,12 @@ const router = express.Router();
 const { poolPromise } = require("../config/dbConfig");
 const authenticateUser = require("../middleware/authenticateUser");
 const {authenticateMember} = require("../middleware/jwt");
+const { Firestore } = require("@google-cloud/firestore");
+const { INITIAL_RELIABILITY } = require("../utils/userReliability");
+const { createChatUserProfileHandler } = require("../utils/chatUserProfile");
+
+router.get("/profileForChat/:chatId", authenticateMember,
+  createChatUserProfileHandler({ poolPromise, db: new Firestore() }));
 
 router.post("/register", authenticateUser, async (req, res) => {
   try {
@@ -49,7 +55,7 @@ router.post("/register", authenticateUser, async (req, res) => {
       birthDate,
       bloodType,
       telegramUsername || null,
-      100,
+      INITIAL_RELIABILITY,
     ]);
 
     res.status(201).json({ msg: "Usuario registrado exitosamente." });
@@ -140,40 +146,9 @@ router.put("/update/:email", authenticateUser, async (req, res) => {
   }
 });
 
-router.put("/reliability/:email", authenticateMember, async (req, res) => {
-  try {
-    const { email } = req.params;
-    const { reliability } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ msg: "El email es requerido." });
-    }
-
-    if (reliability === undefined || reliability < 0 || reliability > 100) {
-      return res.status(400).json({
-        msg: "La confiabilidad es requerida y debe estar entre 0 y 100.",
-      });
-    }
-
-    const pool = await poolPromise;
-    const [existing] = await pool.execute(
-      "SELECT * FROM Users WHERE email = ?",
-      [email]
-    );
-
-    if (existing.length === 0) {
-      return res.status(404).json({ msg: "Usuario no encontrado." });
-    }
-
-    await pool.execute("UPDATE Users SET reliability = ? WHERE email = ?", [
-      reliability,
-      email,
-    ]);
-
-    res.status(200).json({ msg: "Confiabilidad actualizada exitosamente." });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// El puntaje solo cambia al registrar una evaluación de alerta en /reports.
+router.put("/reliability/:email", authenticateMember, (req, res) => {
+  res.status(410).json({ msg: "La confiabilidad ahora se calcula al registrar el reporte de una alerta." });
 });
 
 module.exports = router;

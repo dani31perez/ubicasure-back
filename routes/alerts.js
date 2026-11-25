@@ -112,6 +112,7 @@ async function getNearbyAlerts(latitude, longitude, radiusKm, stationId) {
       longitude,
       reliability,
       email,
+      COALESCE((SELECT u.reliability FROM Users u WHERE u.email = a.email), a.reliability) AS userReliability,
       images,
       analysis,
       ${coverageColumn}
@@ -440,6 +441,7 @@ router.get("/getbyStation/:stationId", authenticateMember, async (req, res) => {
     const pool = await poolPromise;
     const query = `
       SELECT a.alertId, a.latitude, a.longitude, a.reliability, a.email,
+             COALESCE((SELECT u.reliability FROM Users u WHERE u.email = a.email), a.reliability) AS userReliability,
              ${attendingNames} AS attendingStations, a.images, a.fechaCreacion
       FROM AlertAttendingStations ats JOIN Alerts a ON a.alertId = ats.alertId
       WHERE a.active = 1 AND ats.stationId = ?
@@ -477,3 +479,4 @@ router.delete("/:alertId", authenticateMember, async (req, res) => {
 });
 
 module.exports = router;
+
